@@ -3,7 +3,7 @@ import pandas as pd
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout,
     QVBoxLayout, QListWidget, QPushButton, QTabWidget,
-    QLabel, QComboBox, QTableWidget, QMessageBox
+    QLabel, QComboBox, QTableWidget, QMessageBox, QSpinBox
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 import plotly.graph_objects as go
@@ -49,6 +49,7 @@ class TradingApp(QMainWindow):
         self.period_selector.addItem('5 Years', 60)
         self.period_selector.addItem('All', None)
         self.period_selector.setCurrentIndex(3)
+        self.period_selector.currentIndexChanged.connect(self.toggle_strategy_controls)
         self.period_selector.currentIndexChanged.connect(self.refresh_chart)
         sidebar.addWidget(self.period_selector)
 
@@ -57,15 +58,65 @@ class TradingApp(QMainWindow):
         self.strategy_selector.addItems([
             'MACD + RSI Trend Cross', 
             'Mean Reversion Bollinger', 
-            'Volume Breakout Scanner'
+            'Volume Breakout Scanner',
+            'Stochastic Oscillator',
+            'Moving Average'
         ])
+        self.strategy_selector.currentIndexChanged.connect(self.toggle_strategy_controls)
+        self.strategy_selector.currentIndexChanged.connect(self.refresh_chart)
         sidebar.addWidget(self.strategy_selector)
+
+        # Stochastic Parameters
+        self.stochastic_container = QVBoxLayout()
+        self.stochastic_widget = QWidget()
+        self.stochastic_widget.setLayout(self.stochastic_container)
+        sidebar.addWidget(self.stochastic_widget)
+        self.stochastic_widget.hide()
+
+        self.k_period = QSpinBox()
+        self.k_period.setRange(2, 50)
+        self.k_period.setValue(8)
+        self.stochastic_container.addWidget(QLabel('K Period'))
+        self.stochastic_container.addWidget(self.k_period)
+
+        self.k_smooth = QSpinBox()
+        self.k_smooth.setRange(1, 10)
+        self.k_smooth.setValue(3)
+        self.stochastic_container.addWidget(QLabel('K Smoothing'))
+        self.stochastic_container.addWidget(self.k_smooth)
+
+        self.d_smooth = QSpinBox()
+        self.d_smooth.setRange(1, 10)
+        self.d_smooth.setValue(3)
+        self.stochastic_container.addWidget(QLabel('D Smoothing'))
+        self.stochastic_container.addWidget(self.d_smooth)
+
+        # Moving Average parameters
+        self.ma_container = QVBoxLayout()
+        self.ma_widget = QWidget()
+        self.ma_widget.setLayout(self.ma_container)
+        sidebar.addWidget(self.ma_widget)
+        self.ma_widget.hide()
+
+        self.ma_period = QSpinBox()
+        self.ma_period.setRange(2, 200)
+        self.ma_period.setValue(20)
+        self.ma_container.addWidget(QLabel('MA Period'))
+        self.ma_container.addWidget(self.ma_period)
+
+        self.ma_type = QComboBox()
+        self.ma_type.addItems(['SMA', 'EMA'])
+        self.ma_container.addWidget(QLabel('MA Type'))
+        self.ma_container.addWidget(self.ma_type)
 
         self.backtest_btn = QPushButton('Execute backtest Matrix')
         sidebar.addWidget(self.backtest_btn)
         sidebar.addStretch()
 
-        # Right workplace tabs
+        self.ma_period.valueChanged.connect(self.refresh_chart)
+        self.ma_type.currentIndexChanged.connect(self.refresh_chart)
+
+        # Tabs
         self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs)
 
@@ -82,6 +133,17 @@ class TradingApp(QMainWindow):
         self.journal_tab = QTableWidget(5, 5)
         self.journal_tab.setHorizontalHeaderLabels(['Execution Date', 'Ticker', 'Type', 'Entry Price', 'Net PnL (INR)'])
         self.tabs.addTab(self.journal_tab, 'Execution Journal')
+
+    def toggle_strategy_controls(self):
+        if self.strategy_selector.currentText() == 'Stochastic Oscillator':
+            self.stochastic_widget.show()
+            self.ma_widget.hide()
+        elif self.strategy_selector.currentText() == 'Moving Average':
+            self.ma_widget.show()
+            self.stochastic_widget.hide()
+        else:
+            self.stochastic_widget.hide()
+            self.ma_widget.hide()
 
     def refresh_chart(self):
         item = self.ticker_list.currentItem()
@@ -101,47 +163,80 @@ class TradingApp(QMainWindow):
         df = df.copy()
         df['date'] = pd.to_datetime(df['date'])
 
+        # Base subplot layout
         fig = make_subplots(
-            rows=2,
-            cols=1,
+            rows=3, cols=1,
             shared_xaxes=True,
+            row_heights=[0.6, 0.2, 0.2],
             vertical_spacing=0.05,
-            row_heights=[0.7, 0.3]
+            subplot_titles=("Price", "Volume", "Indicators")
         )
 
-        fig.add_trace(
-            go.Candlestick(
-                x=df['date'],
-                open=df['open'],
-                high=df['high'],
-                low=df['low'],
-                close=df['close'],
-                name='Price'
-            ),
-            row=1, col=1
-        )
+        # Price candlesticks
+        fig.add_trace(go.Candlestick(
+            x=df['date'],
+            open=df['open'],
+            high=df['high'],
+            low=df['low'],
+            close=df['close'],
+            name='Price'
+        ), row=1, col=1)
 
-        fig.add_trace(
-            go.Bar(
-                x=df['date'],
-                y=df['volume'],
-                name='Volume',
-                marker_color='rgba(128, 128, 128, 0.6)',
-            ),
-            row=2, col=1
-        )
+        # Volume bars
+        fig.add_trace(go.Bar(
+            x=df['date'],
+            y=df['volume'],
+            name='Volume',
+            marker_color='lightblue',
+            opacity=0.6
+        ), row=2, col=1)
+
+        # Strategy overlays
+        if self.strategy_selector.currentText() == 'Stochastic Oscillator':
+            k_period = self.k_period.value()
+            k_smooth = self.k_smooth.value()
+            d_smooth = self.d_smooth.value()
+
+            low_min = df['low'].rolling(window=k_period).min()
+            high_max = df['high'].rolling(window=k_period).max()
+            df['%K'] = 100 * (df['close'] - low_min) / (high_max - low_min)
+            df['%K'] = df['%K'].rolling(window=k_smooth).mean()
+            df['%D'] = df['%K'].rolling(window=d_smooth).mean()
+
+            fig.add_trace(go.Scatter(
+                x=df['date'], y=df['%K'], mode='lines', name='%K', line=dict(color='orange')
+            ), row=3, col=1)
+            fig.add_trace(go.Scatter(
+                x=df['date'], y=df['%D'], mode='lines', name='%D', line=dict(color='blue')
+            ), row=3, col=1)
+
+            fig.update_yaxes(title_text="Stochastic", row=3, col=1, tickvals=[0,20,40,60,80,100])
+
+        elif self.strategy_selector.currentText() == 'Moving Average':
+            ma_period = self.ma_period.value()
+            ma_type = self.ma_type.currentText()
+
+            if ma_type == 'SMA':
+                df['MA'] = df['close'].rolling(window=ma_period).mean()
+            else:  # EMA
+                df['MA'] = df['close'].ewm(span=ma_period, adjust=False).mean()
+
+            fig.add_trace(go.Scatter(
+                x=df['date'], y=df['MA'], mode='lines', name=f'{ma_type} {ma_period}',
+                line=dict(color='yellow')
+            ), row=1, col=1)
 
         fig.update_layout(
             template='plotly_dark',
-            title='Asset Price and Volume Terminal',
-            yaxis_title='Price',
-            yaxis2_title='Volume',
             xaxis_rangeslider_visible=False,
-            height=600
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
 
-        #fig.show()
+        # Axis labels
+        fig.update_yaxes(title_text="Price", row=1, col=1)
+        fig.update_yaxes(title_text="Volume", row=2, col=1)
 
+        # Render into the PyQt web view
         html = fig.to_html(include_plotlyjs='cdn')
         self.plotly_view.setHtml(html)
 
