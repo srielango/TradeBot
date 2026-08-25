@@ -1,16 +1,19 @@
 import sys
 import pandas as pd
+import os
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout,
     QVBoxLayout, QListWidget, QPushButton, QTabWidget,
-    QLabel, QComboBox, QTableWidget, QMessageBox, QSpinBox
+    QLabel, QTableWidget, QMessageBox, QSpinBox, QAbstractItemView, QComboBox
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from lightweight_charts.widgets import QtChart
-import os
+from PyQt6.QtCore import Qt
+
 from market_repository import MarketRepository
+
 
 class TradingApp(QMainWindow):
     def __init__(self):
@@ -26,7 +29,7 @@ class TradingApp(QMainWindow):
         main_layout = QHBoxLayout(main_widget)
         self.setCentralWidget(main_widget)
 
-        # Left control panel sidebar
+        # Sidebar
         sidebar = QVBoxLayout()
         sidebar_container = QWidget()
         sidebar_container.setFixedWidth(240)
@@ -49,101 +52,88 @@ class TradingApp(QMainWindow):
         self.period_selector.addItem('5 Years', 60)
         self.period_selector.addItem('All', None)
         self.period_selector.setCurrentIndex(3)
-        self.period_selector.currentIndexChanged.connect(self.toggle_strategy_controls)
         self.period_selector.currentIndexChanged.connect(self.refresh_chart)
         sidebar.addWidget(self.period_selector)
 
-        sidebar.addWidget(QLabel('<b>Active Execution Strategy</b>'))
-        self.strategy_selector = QComboBox()
-        self.strategy_selector.addItems([
-            'MACD + RSI Trend Cross', 
-            'Mean Reversion Bollinger', 
-            'Volume Breakout Scanner',
+        sidebar.addWidget(QLabel('<b>Active Indicators</b>'))
+        self.indicator_list = QListWidget()
+        self.indicator_list.addItems([
             'Stochastic Oscillator',
             'Moving Average'
         ])
-        self.strategy_selector.currentIndexChanged.connect(self.toggle_strategy_controls)
-        self.strategy_selector.currentIndexChanged.connect(self.refresh_chart)
-        sidebar.addWidget(self.strategy_selector)
+        self.indicator_list.setSelectionMode(self.indicator_list.SelectionMode.MultiSelection)
+        self.indicator_list.itemSelectionChanged.connect(self.refresh_chart)
+        sidebar.addWidget(self.indicator_list)
 
-        # Stochastic Parameters
-        self.stochastic_container = QVBoxLayout()
+        # Stochastic parameters
         self.stochastic_widget = QWidget()
-        self.stochastic_widget.setLayout(self.stochastic_container)
+        stochastic_layout = QVBoxLayout(self.stochastic_widget)
         sidebar.addWidget(self.stochastic_widget)
-        self.stochastic_widget.hide()
 
         self.k_period = QSpinBox()
         self.k_period.setRange(2, 50)
         self.k_period.setValue(8)
-        self.stochastic_container.addWidget(QLabel('K Period'))
-        self.stochastic_container.addWidget(self.k_period)
+        stochastic_layout.addWidget(QLabel('K Period'))
+        stochastic_layout.addWidget(self.k_period)
 
         self.k_smooth = QSpinBox()
         self.k_smooth.setRange(1, 10)
         self.k_smooth.setValue(3)
-        self.stochastic_container.addWidget(QLabel('K Smoothing'))
-        self.stochastic_container.addWidget(self.k_smooth)
+        stochastic_layout.addWidget(QLabel('K Smoothing'))
+        stochastic_layout.addWidget(self.k_smooth)
 
         self.d_smooth = QSpinBox()
         self.d_smooth.setRange(1, 10)
         self.d_smooth.setValue(3)
-        self.stochastic_container.addWidget(QLabel('D Smoothing'))
-        self.stochastic_container.addWidget(self.d_smooth)
+        stochastic_layout.addWidget(QLabel('D Smoothing'))
+        stochastic_layout.addWidget(self.d_smooth)
+
+        self.k_period.valueChanged.connect(self.refresh_chart)
+        self.k_smooth.valueChanged.connect(self.refresh_chart)
+        self.d_smooth.valueChanged.connect(self.refresh_chart)
 
         # Moving Average parameters
-        self.ma_container = QVBoxLayout()
         self.ma_widget = QWidget()
-        self.ma_widget.setLayout(self.ma_container)
+        ma_layout = QVBoxLayout(self.ma_widget)
         sidebar.addWidget(self.ma_widget)
-        self.ma_widget.hide()
 
         self.ma_period = QSpinBox()
         self.ma_period.setRange(2, 200)
         self.ma_period.setValue(20)
-        self.ma_container.addWidget(QLabel('MA Period'))
-        self.ma_container.addWidget(self.ma_period)
+        ma_layout.addWidget(QLabel('MA Period'))
+        ma_layout.addWidget(self.ma_period)
 
         self.ma_type = QComboBox()
         self.ma_type.addItems(['SMA', 'EMA'])
-        self.ma_container.addWidget(QLabel('MA Type'))
-        self.ma_container.addWidget(self.ma_type)
+        ma_layout.addWidget(QLabel('MA Type'))
+        ma_layout.addWidget(self.ma_type)
+
+        self.ma_period.valueChanged.connect(self.refresh_chart)
+        self.ma_type.currentIndexChanged.connect(self.refresh_chart)
 
         self.backtest_btn = QPushButton('Execute backtest Matrix')
         sidebar.addWidget(self.backtest_btn)
         sidebar.addStretch()
 
-        self.ma_period.valueChanged.connect(self.refresh_chart)
-        self.ma_type.currentIndexChanged.connect(self.refresh_chart)
-
         # Tabs
         self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs)
 
+        # Chart tab with Plotly
         self.chart_tab = QWidget()
         chart_tab_layout = QVBoxLayout(self.chart_tab)
         self.plotly_view = QWebEngineView(self.chart_tab)
         chart_tab_layout.addWidget(self.plotly_view)
         self.tabs.addTab(self.chart_tab, 'Analysis Terminal')
 
+        # Other tabs
         self.scanner_tab = QTableWidget(10, 4)
-        self.scanner_tab.setHorizontalHeaderLabels(['Ticker', 'Strategy Setup', 'Signal Output', 'Target Action'])
+        self.scanner_tab.setHorizontalHeaderLabels(['Ticker', 'Indicator Setup', 'Signal Output', 'Target Action'])
         self.tabs.addTab(self.scanner_tab, 'Morning Scanner')
 
         self.journal_tab = QTableWidget(5, 5)
         self.journal_tab.setHorizontalHeaderLabels(['Execution Date', 'Ticker', 'Type', 'Entry Price', 'Net PnL (INR)'])
         self.tabs.addTab(self.journal_tab, 'Execution Journal')
-
-    def toggle_strategy_controls(self):
-        if self.strategy_selector.currentText() == 'Stochastic Oscillator':
-            self.stochastic_widget.show()
-            self.ma_widget.hide()
-        elif self.strategy_selector.currentText() == 'Moving Average':
-            self.ma_widget.show()
-            self.stochastic_widget.hide()
-        else:
-            self.stochastic_widget.hide()
-            self.ma_widget.hide()
 
     def refresh_chart(self):
         item = self.ticker_list.currentItem()
@@ -191,8 +181,10 @@ class TradingApp(QMainWindow):
             opacity=0.6
         ), row=2, col=1)
 
-        # Strategy overlays
-        if self.strategy_selector.currentText() == 'Stochastic Oscillator':
+        # Selected indicators
+        selected = [item.text() for item in self.indicator_list.selectedItems()]
+
+        if 'Stochastic Oscillator' in selected:
             k_period = self.k_period.value()
             k_smooth = self.k_smooth.value()
             d_smooth = self.d_smooth.value()
@@ -212,19 +204,22 @@ class TradingApp(QMainWindow):
 
             fig.update_yaxes(title_text="Stochastic", row=3, col=1, tickvals=[0,20,40,60,80,100])
 
-        elif self.strategy_selector.currentText() == 'Moving Average':
+        if 'Moving Average' in selected:
             ma_period = self.ma_period.value()
             ma_type = self.ma_type.currentText()
 
-            if ma_type == 'SMA':
-                df['MA'] = df['close'].rolling(window=ma_period).mean()
-            else:  # EMA
-                df['MA'] = df['close'].ewm(span=ma_period, adjust=False).mean()
+            if len(df) >= ma_period:
+                if ma_type == 'SMA':
+                    df['MA'] = df['close'].rolling(window=ma_period).mean()
+                else:  # EMA
+                    df['MA'] = df['close'].ewm(span=ma_period, adjust=False).mean()
 
-            fig.add_trace(go.Scatter(
-                x=df['date'], y=df['MA'], mode='lines', name=f'{ma_type} {ma_period}',
-                line=dict(color='yellow')
-            ), row=1, col=1)
+                fig.add_trace(go.Scatter(
+                    x=df['date'], y=df['MA'], mode='lines',
+                    name=f'{ma_type} {ma_period}', line=dict(color='yellow')
+                ), row=1, col=1)
+            else:
+                print(f"Not enough data for {ma_type} {ma_period}")
 
         fig.update_layout(
             template='plotly_dark',
@@ -242,14 +237,20 @@ class TradingApp(QMainWindow):
 
     def check_database_health(self):
         if not os.path.exists(self.repo.db_path):
-            QMessageBox.critical(self, 'Database missing', f'Could not find tradebot.db file at path:\n{self.repo.db_path}')
+            QMessageBox.critical(
+                self,
+                'Database missing',
+                f'Could not find tradebot.db file at path:\n{self.repo.db_path}'
+            )
         elif self.ticker_list.count() == 0:
-            QMessageBox.warning(self, 'Empty Watchlist', 'Connected to tradebot.db successfully, but the "securities" table contains zero rows.')
+            QMessageBox.warning(
+                self,
+                'Empty Watchlist',
+                'Connected to tradebot.db successfully, but the "securities" table contains zero rows.'
+            )
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-
     window = TradingApp()
     window.show()
-
     sys.exit(app.exec())
