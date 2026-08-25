@@ -6,9 +6,8 @@ from PyQt6.QtWidgets import (
     QLabel, QComboBox, QTableWidget, QMessageBox
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-
 import plotly.graph_objects as go
-
+from plotly.subplots import make_subplots
 from lightweight_charts.widgets import QtChart
 import sqlite3
 import os
@@ -80,7 +79,6 @@ class TradingApp(QMainWindow):
         self.setWindowTitle('Tradebot Management Studio')
         self.resize(1400, 900)
         self.repo = MarketRepository('tradebot.db')
-        self.candle_series = None  # Track our active candle overlay container
         self.init_ui()
         self.check_database_health()
 
@@ -134,14 +132,9 @@ class TradingApp(QMainWindow):
 
         self.chart_tab = QWidget()
         chart_tab_layout = QVBoxLayout(self.chart_tab)
-        
-        # Instantiate the main Lightweight Charts widget container
-        self.tv_chart = QtChart(self.chart_tab)
-        chart_tab_layout.addWidget(self.tv_chart.get_webview())
+        self.plotly_view = QWebEngineView(self.chart_tab)
+        chart_tab_layout.addWidget(self.plotly_view)
         self.tabs.addTab(self.chart_tab, 'Analysis Terminal')
-
-        # Initialize the low level candle container series exactly once
-        # self.candle_series = self.tv_chart.create_candlestick()
 
         self.scanner_tab = QTableWidget(10, 4)
         self.scanner_tab.setHorizontalHeaderLabels(['Ticker', 'Strategy Setup', 'Signal Output', 'Target Action'])
@@ -167,11 +160,51 @@ class TradingApp(QMainWindow):
             return
 
         df = df.copy()
+        df['date'] = pd.to_datetime(df['date'])
 
-        df['time'] = pd.to_datetime(df['date']).dt.strftime('%Y-%m-%d')
-        df = df[['time', 'open', 'high', 'low', 'close', 'volume']]
-        self.tv_chart.set(df)
+        fig = make_subplots(
+            rows=2,
+            cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.05,
+            row_heights=[0.7, 0.3]
+        )
 
+        fig.add_trace(
+            go.Candlestick(
+                x=df['date'],
+                open=df['open'],
+                high=df['high'],
+                low=df['low'],
+                close=df['close'],
+                name='Price'
+            ),
+            row=1, col=1
+        )
+
+        fig.add_trace(
+            go.Bar(
+                x=df['date'],
+                y=df['volume'],
+                name='Volume',
+                marker_color='rgba(128, 128, 128, 0.6)',
+            ),
+            row=2, col=1
+        )
+
+        fig.update_layout(
+            template='plotly_dark',
+            title='Asset Price and Volume Terminal',
+            yaxis_title='Price',
+            yaxis2_title='Volume',
+            xaxis_rangeslider_visible=False,
+            height=600
+        )
+
+        #fig.show()
+
+        html = fig.to_html(include_plotlyjs='cdn')
+        self.plotly_view.setHtml(html)
 
     def check_database_health(self):
         if not os.path.exists(self.repo.db_path):
