@@ -2,23 +2,12 @@
 
 import sqlite3
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
 import pandas as pd
 import yfinance as yf
 
-DB_NAME = "tradebot.db"
-
-TARGET_INDICES = {
-    "^CNXIT": "Nifty IT Index",
-    "^CNXAUTO": "Nifty Auto Index",
-    "^CNXPHARMA": "Nifty Pharma Index",
-    "^CNXFMCG": "Nifty FMCG Index",
-    "^CNXFIN": "Nifty Financial Services Index",
-    "^CNXMETAL": "Nifty Metal Index",
-    "^CNXREALTY": "Nifty Realty Index",
-    "^CNXENERGY": "Nifty Energy Index",
-    "^NSEBANK": "Bank Nifty Index",
-}
+from config import DB_PATH, NIFTY200_CSV_PATH, TARGET_INDICES
 
 
 def create_database():
@@ -48,7 +37,7 @@ def create_database():
     """
 
     try:
-        with sqlite3.connect(DB_NAME) as conn:
+        with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
 
             cursor.execute(sql_create_securities)
@@ -65,7 +54,7 @@ def create_database():
                 )
 
             # Seed constituents from Nifty 200 list
-            df_n200 = pd.read_csv('ind_nifty200list.csv')
+            df_n200 = pd.read_csv(NIFTY200_CSV_PATH)
             print("Reading Nifty 200 list...")
             for _, row in df_n200.iterrows():
                 raw_symbol = row['Symbol'].strip()
@@ -89,12 +78,12 @@ def create_database():
 
 def process_historical_downloads():
     """Download 10-year historical daily price bars for all registered securities."""
-    with sqlite3.connect(DB_NAME) as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, ticker, asset_type FROM securities")
         securities_list = cursor.fetchall()
 
-    end_date = datetime.now()
+    end_date = datetime.now(timezone.utc)
     start_date = end_date - timedelta(days=10 * 365)
     start_str = start_date.strftime("%Y-%m-%d")
     end_str = end_date.strftime("%Y-%m-%d")
@@ -102,7 +91,7 @@ def process_historical_downloads():
     print(f"Starting mass download for {len(securities_list)} securities...")
 
     for sec_id, ticker, asset_type in securities_list:
-        with sqlite3.connect(DB_NAME) as conn:
+        with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT COUNT(*) FROM daily_prices WHERE security_id = ?",
@@ -170,7 +159,7 @@ def process_historical_downloads():
                 # Cooldown to handle standard Yahoo API rate thresholds
                 time.sleep(1)
 
-            except Exception as err:
+            except (sqlite3.Error, OSError, ValueError, KeyError) as err:
                 print(f"Failed processing {ticker}: {err}")
 
 
@@ -180,7 +169,7 @@ def download_and_store_history(ticker: str):
     Args:
         ticker (str): Yahoo finance ticker symbol (e.g. '^NSEI' or 'INFY.NS').
     """
-    with sqlite3.connect(DB_NAME) as conn:
+    with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id FROM securities WHERE ticker = ?", (ticker,))
         row = cursor.fetchone()
@@ -190,7 +179,7 @@ def download_and_store_history(ticker: str):
             return
 
         security_id = row[0]
-        end_date = datetime.now()
+        end_date = datetime.now(timezone.utc)
         start_date = end_date - timedelta(days=10 * 365)
         start_str = start_date.strftime("%Y-%m-%d")
         end_str = end_date.strftime("%Y-%m-%d")

@@ -2,25 +2,31 @@
 
 import pandas as pd
 
+from config import DEFAULT_INITIAL_CAPITAL, DEFAULT_RISK_PER_TRADE
+
 
 class BacktestEngine:
-    """Simulates trade execution based on generated strategy signals and calculates performance metrics."""
+    """Simulates trade execution based on signals and calculates performance metrics."""
 
-    def __init__(self, initial_capital: float = 1_000_000, risk_per_trade: float = 0.01):
+    def __init__(
+        self,
+        initial_capital: float = DEFAULT_INITIAL_CAPITAL,
+        risk_per_trade: float = DEFAULT_RISK_PER_TRADE,
+    ):
         """Initialize the backtest engine with capital and risk parameters.
 
         Args:
-            initial_capital (float): Starting portfolio capital in INR. Defaults to 1,000,000.
+            initial_capital (float): Starting capital in INR. Defaults to DEFAULT_INITIAL_CAPITAL.
             risk_per_trade (float): Fractional risk allocation per trade (e.g. 0.01 for 1%).
         """
         self.initial_capital = initial_capital
         self.risk_amount = initial_capital * risk_per_trade
 
     def run(self, df: pd.DataFrame) -> dict:
-        """Execute backtest over the historical dataset using next-day market open prices.
+        """Execute backtest over historical dataset using next-day market open prices.
 
         Args:
-            df (pd.DataFrame): DataFrame containing signals, date, open, close, StopLoss, and PositionSize.
+            df (pd.DataFrame): DataFrame with signals, date, open, close, StopLoss, PositionSize.
 
         Returns:
             dict: Dictionary containing 'TradeLog' (DataFrame) and 'Metrics' (summary statistics).
@@ -29,7 +35,7 @@ class BacktestEngine:
         position = None  # Active open trade position
         capital = self.initial_capital
 
-        # Loop until the second-to-last row for next-day open price execution
+        # Loop until second-to-last row for next-day open price execution
         for i in range(len(df) - 1):
             signal = df.loc[i, 'Signal']
 
@@ -45,7 +51,7 @@ class BacktestEngine:
                         "EntryDate": entry_date,
                         "EntryPrice": entry_price,
                         "StopLoss": stop_loss,
-                        "Size": position_size
+                        "Size": position_size,
                     }
 
             # --- Exit Logic ---
@@ -54,7 +60,9 @@ class BacktestEngine:
                 exit_price = df.loc[i + 1, 'open']
 
                 pnl = (exit_price - position["EntryPrice"]) * position["Size"]
-                ret_pct = (exit_price - position["EntryPrice"]) / position["EntryPrice"] * 100
+                ret_pct = (
+                    (exit_price - position["EntryPrice"]) / position["EntryPrice"] * 100
+                )
                 result = "Win" if pnl > 0 else "Loss"
 
                 trades.append({
@@ -64,7 +72,7 @@ class BacktestEngine:
                     "ExitPrice": exit_price,
                     "PnL": pnl,
                     "ReturnPct": ret_pct,
-                    "Result": result
+                    "Result": result,
                 })
 
                 capital += pnl
@@ -85,6 +93,6 @@ class BacktestEngine:
                 "Losses": losses,
                 "TotalPnL": total_pnl,
                 "WinRatePct": win_rate,
-                "FinalCapital": capital
-            }
+                "FinalCapital": capital,
+            },
         }

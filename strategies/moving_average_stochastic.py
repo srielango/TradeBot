@@ -9,7 +9,7 @@ except ImportError:
 
 
 class MovingAverageStochastic(BaseStrategy):
-    """Strategy combining 200-day Trend Following Moving Average with Stochastic Oscillator reversals."""
+    """Strategy combining 200-day Trend Following Moving Average with Stochastic Oscillator."""
 
     @property
     def name(self) -> str:
@@ -23,7 +23,7 @@ class MovingAverageStochastic(BaseStrategy):
             df (pd.DataFrame): Historical price DataFrame with open, high, low, close.
 
         Returns:
-            pd.DataFrame: Augmented DataFrame containing calculated indicators, Signal, StopLoss, and PositionSize.
+            pd.DataFrame: DataFrame containing indicators, Signal, StopLoss, and PositionSize.
         """
         df = df.copy()
 
@@ -41,18 +41,18 @@ class MovingAverageStochastic(BaseStrategy):
         # --- Signal Logic ---
         df['Signal'] = 0
 
-        # Conservative Entry: Bullish trend filter + stochastic crossover below oversold threshold 20
+        # Conservative Entry: Bullish trend filter + stochastic crossover below oversold threshold
         buy_condition = (
-            (df['close'] > df['MA200']) &
-            (df['%K'].shift(1) < df['%D'].shift(1)) &
-            (df['%K'] > df['%D']) &
-            (df['%K'] < 20)
+            (df['close'] > df['MA200'])
+            & (df['%K'].shift(1) < df['%D'].shift(1))
+            & (df['%K'] > df['%D'])
+            & (df['%K'] < 20)
         )
 
         # Exit: Price breaks below 200 MA or stochastic bearish cross
         sell_condition = (
-            (df['close'] < df['MA200']) |
-            ((df['%K'].shift(1) > df['%D'].shift(1)) & (df['%K'] < df['%D']))
+            (df['close'] < df['MA200'])
+            | ((df['%K'].shift(1) > df['%D'].shift(1)) & (df['%K'] < df['%D']))
         )
 
         # Apply signals

@@ -2,11 +2,11 @@
 
 import sqlite3
 import time
-from datetime import datetime, timedelta
-import pandas as pd
+from datetime import datetime, timedelta, timezone
+
 import yfinance as yf
 
-DB_NAME = "tradebot.db"
+from config import DB_PATH
 
 
 def get_latest_stored_date(cursor: sqlite3.Cursor, security_id: int) -> str | None:
@@ -33,13 +33,13 @@ def get_latest_stored_date(cursor: sqlite3.Cursor, security_id: int) -> str | No
 
 def run_daily_sync():
     """Synchronize latest end-of-day price bars for all registered securities."""
-    conn = sqlite3.connect(DB_NAME)
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     cursor.execute("SELECT id, ticker FROM securities")
     securities_list = cursor.fetchall()
 
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     print(f"Starting daily sync batch for date: {today_str}")
     print(f"Tracking {len(securities_list)} total securities.\n" + "=" * 50)
 
@@ -47,10 +47,12 @@ def run_daily_sync():
         last_date_str = get_latest_stored_date(cursor, sec_id)
 
         if last_date_str:
-            last_date_obj = datetime.strptime(last_date_str, "%Y-%m-%d")
+            last_date_obj = datetime.strptime(
+                last_date_str, "%Y-%m-%d"
+            ).replace(tzinfo=timezone.utc)
             start_date_obj = last_date_obj + timedelta(days=1)
         else:
-            start_date_obj = datetime.now() - timedelta(days=30)
+            start_date_obj = datetime.now(timezone.utc) - timedelta(days=30)
 
         start_str = start_date_obj.strftime("%Y-%m-%d")
 
@@ -120,8 +122,8 @@ def run_daily_sync():
 
             time.sleep(0.6)
 
-        except Exception as err:
-            print(f"Network/Processing error for {ticker}: {err}")
+        except (sqlite3.Error, OSError, ValueError, KeyError) as err:
+            print(f"Error processing {ticker}: {err}")
             conn.rollback()
 
     conn.close()

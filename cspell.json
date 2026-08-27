@@ -1,0 +1,18 @@
+{
+    "version": "0.2",
+    "enabled": false,
+    "ignorePaths": [
+        "**/*.csv",
+        "**/*.db",
+        "**/*.sqlite3",
+        "**/resources/**",
+        "**/data/**",
+        "resources/**",
+        "data/**",
+        "**/.git/**"
+    ],
+    "enableFiletypes": [
+        "!csv",
+        "!plaintext"
+    ]
+}

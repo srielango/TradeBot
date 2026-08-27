@@ -1,6 +1,7 @@
 """Base strategy abstraction and reference strategy implementations."""
 
 from abc import ABC, abstractmethod
+
 import pandas as pd
 
 
@@ -11,19 +12,17 @@ class BaseStrategy(ABC):
     @abstractmethod
     def name(self) -> str:
         """Return the unique identifier name of the strategy."""
-        pass
 
     @abstractmethod
     def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         """Generate indicator values and trading signals on the input OHLCV DataFrame.
 
         Args:
-            df (pd.DataFrame): DataFrame containing 'open', 'high', 'low', 'close', and 'volume'.
+            df (pd.DataFrame): DataFrame with 'open', 'high', 'low', 'close', and 'volume'.
 
         Returns:
-            pd.DataFrame: DataFrame with added technical indicators and a 'Signal' column (1, 0, -1).
+            pd.DataFrame: DataFrame with indicators and a 'Signal' column (1, 0, -1).
         """
-        pass
 
 
 class MacdRsiSwing(BaseStrategy):
