@@ -1,24 +1,38 @@
+"""Daily data synchronization module for updating database records from Yahoo Finance."""
 
 import sqlite3
+import time
 from datetime import datetime, timedelta
 import pandas as pd
 import yfinance as yf
-import time
 
 DB_NAME = "tradebot.db"
 
-def get_latest_stored_date(cursor, security_id):
+
+def get_latest_stored_date(cursor: sqlite3.Cursor, security_id: int) -> str | None:
+    """Retrieve the latest recorded price date for a specific security.
+
+    Args:
+        cursor (sqlite3.Cursor): Active database cursor.
+        security_id (int): Primary key ID of the security.
+
+    Returns:
+        str | None: Date string in 'YYYY-MM-DD' format if found, otherwise None.
+    """
     cursor.execute(
         """
-            SELECT MAX(date) FROM daily_prices
-            WHERE security_id = ?
-        """, (security_id,),
+        SELECT MAX(date)
+        FROM daily_prices
+        WHERE security_id = ?
+        """,
+        (security_id,),
     )
-
     result = cursor.fetchone()
-    return result[0] if result[0] else None
+    return result[0] if result and result[0] else None
+
 
 def run_daily_sync():
+    """Synchronize latest end-of-day price bars for all registered securities."""
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
@@ -26,8 +40,8 @@ def run_daily_sync():
     securities_list = cursor.fetchall()
 
     today_str = datetime.now().strftime("%Y-%m-%d")
-    print(f'Starting daily sync batch for date: {today_str}')
-    print(f'Tracking {len(securities_list)} total securities. \n' + '=' * 50)
+    print(f"Starting daily sync batch for date: {today_str}")
+    print(f"Tracking {len(securities_list)} total securities.\n" + "=" * 50)
 
     for sec_id, ticker in securities_list:
         last_date_str = get_latest_stored_date(cursor, sec_id)
@@ -41,24 +55,24 @@ def run_daily_sync():
         start_str = start_date_obj.strftime("%Y-%m-%d")
 
         if start_str > today_str:
-            print(f'{ticker:<12} | Up-to-date (Last record: {last_date_str})')
+            print(f"{ticker:<12} | Up-to-date (Last record: {last_date_str})")
             continue
 
-        print(f'{ticker:<12} | Syncing missing window: {start_str} to {today_str}')
+        print(f"{ticker:<12} | Syncing missing window: {start_str} to {today_str}")
 
         try:
             df = yf.download(
                 ticker,
-                start = start_str,
-                end = None,
-                interval = "1d",
-                progress = False,
-                auto_adjust = True,
-                multi_level_index = False
+                start=start_str,
+                end=None,
+                interval="1d",
+                progress=False,
+                auto_adjust=True,
+                multi_level_index=False,
             )
 
             if df is None or df.empty or len(df) == 0:
-                print(f'No new trading bars found online.')
+                print(f"{ticker:<12} | No new trading bars found online.")
                 time.sleep(0.2)
                 continue
 
@@ -66,7 +80,6 @@ def run_daily_sync():
             df.columns = [col.lower() for col in df.columns]
 
             records_to_insert = []
-
             for _, row in df.iterrows():
                 date_val = row["date"]
                 date_str = (
@@ -93,23 +106,26 @@ def run_daily_sync():
             if records_to_insert:
                 cursor.executemany(
                     """
-                        INSERT OR IGNORE INTO daily_prices (security_id, date, open, high, low, close, volume)
-                        VALUES (?,?,?,?,?,?,?)
+                    INSERT OR IGNORE INTO daily_prices (
+                        security_id, date, open, high, low, close, volume
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     records_to_insert,
                 )
                 conn.commit()
-                print(f'Added {len(records_to_insert)} new daily bars.')
+                print(f"{ticker:<12} | Added {len(records_to_insert)} new daily bars.")
             else:
-                print(f'Data up to date inside database.')
+                print(f"{ticker:<12} | Data up to date inside database.")
 
-                time.sleep(0.6)
+            time.sleep(0.6)
 
-        except Exception as e:
-            print(f'Network/Processing error for {ticker}: {e}')
+        except Exception as err:
+            print(f"Network/Processing error for {ticker}: {err}")
             conn.rollback()
 
-    conn.close()       
+    conn.close()
+
 
 if __name__ == "__main__":
     run_daily_sync()

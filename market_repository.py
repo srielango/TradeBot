@@ -1,14 +1,31 @@
+"""Market repository module for managing database operations on financial data."""
+
+import os
 import sqlite3
 import pandas as pd
-import os
+
 
 class MarketRepository:
-    def __init__(self, db_name='tradebot.db'):
+    """Repository class to interact with SQLite database storing market data."""
+
+    def __init__(self, db_name: str = 'tradebot.db'):
+        """Initialize the repository with the path to SQLite database.
+
+        Args:
+            db_name (str): The filename or path of the SQLite database.
+        """
         self.db_path = os.path.abspath(db_name)
 
-    def get_tickers(self):
+    def get_tickers(self) -> list[str]:
+        """Fetch list of all active ticker symbols and asset types from securities table.
+
+        Returns:
+            list[str]: Formatted ticker strings with asset types, e.g., 'RELIANCE.NS (STOCK)'.
+        """
         query = """
-        SELECT ticker, name, asset_type FROM securities ORDER BY asset_type DESC, ticker ASC
+            SELECT ticker, name, asset_type
+            FROM securities
+            ORDER BY asset_type DESC, ticker ASC
         """
         try:
             with sqlite3.connect(self.db_path) as conn:
@@ -17,46 +34,44 @@ class MarketRepository:
                     f"{row['ticker']} ({row['asset_type']})"
                     for _, row in df.iterrows()
                 ]
-        except sqlite3.Error:
+        except sqlite3.Error as err:
+            print(f"Database error while fetching tickers: {err}")
             return []
 
-    def get_data(self, display_string: str, horizon_months: int = None):
+    def get_data(self, display_string: str) -> pd.DataFrame:
+        """Fetch historical daily price records for a selected ticker.
+
+        Args:
+            display_string (str): Formatted ticker string from the UI, e.g. 'RELIANCE.NS (STOCK)'.
+
+        Returns:
+            pd.DataFrame: DataFrame containing daily prices (date, open, high, low, close, volume).
+        """
         if not display_string:
             return pd.DataFrame()
-            
+
         ticker = display_string.split(" ")[0]
-        
-        # 1. Base query: Pull raw dates directly
+
         query = """
             SELECT p.date, p.open, p.high, p.low, p.close, p.volume
             FROM daily_prices p
             JOIN securities s ON p.security_id = s.id
             WHERE s.ticker = ?
+            ORDER BY p.date ASC
         """
         params = [ticker]
-        
-        # 2. SQLite exact dynamic math modifier 
-        if horizon_months is not None:
-            query += """ 
-                AND p.date >= date(
-                    (SELECT MAX(date) FROM daily_prices pd JOIN securities sd ON pd.security_id = sd.id WHERE sd.ticker = ?), 
-                    ?
-                )
-            """
-            params.extend([ticker, f'-{horizon_months} months'])
-            
-        query += " ORDER BY p.date ASC"
-        
+
         try:
             with sqlite3.connect(self.db_path) as conn:
                 df = pd.read_sql_query(query, conn, params=params)
-                
-            if df.empty: return df
 
-            # Standardize names to lowercase
+            if df.empty:
+                return df
+
+            # Standardize column names to lowercase
             df.columns = df.columns.str.lower()
             return df
-            
-        except sqlite3.Error as e:
-            print(f"Database error while loading daily prices: {e}")
+
+        except sqlite3.Error as err:
+            print(f"Database error while loading daily prices: {err}")
             return pd.DataFrame()

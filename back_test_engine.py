@@ -1,22 +1,90 @@
-import numpy as np
+"""Backtesting engine module for evaluating trading strategies on historical data."""
+
 import pandas as pd
 
+
 class BacktestEngine:
-    def __init__(self, initial_capital=100000.0):
+    """Simulates trade execution based on generated strategy signals and calculates performance metrics."""
+
+    def __init__(self, initial_capital: float = 1_000_000, risk_per_trade: float = 0.01):
+        """Initialize the backtest engine with capital and risk parameters.
+
+        Args:
+            initial_capital (float): Starting portfolio capital in INR. Defaults to 1,000,000.
+            risk_per_trade (float): Fractional risk allocation per trade (e.g. 0.01 for 1%).
+        """
         self.initial_capital = initial_capital
+        self.risk_amount = initial_capital * risk_per_trade
 
     def run(self, df: pd.DataFrame) -> dict:
-        results = df.copy()
+        """Execute backtest over the historical dataset using next-day market open prices.
 
-        results['Market_Returns'] = np.log(results['Close'] / results['Close'].shift(1))
-        results['Strategy_Returns'] = results['Market_returns'] * results['Signal'].shift(1)
+        Args:
+            df (pd.DataFrame): DataFrame containing signals, date, open, close, StopLoss, and PositionSize.
 
-        total_return = np.exp(results['Strategy_Returns'].sum()) - 1
-        sharpe = (results['Strategy_Returns'].mean() / results['Strategy_Returns'].std()) * np.sqrt(252) if results['Stragety_Returns'].std() != 0 else 0
+        Returns:
+            dict: Dictionary containing 'TradeLog' (DataFrame) and 'Metrics' (summary statistics).
+        """
+        trades = []
+        position = None  # Active open trade position
+        capital = self.initial_capital
+
+        # Loop until the second-to-last row for next-day open price execution
+        for i in range(len(df) - 1):
+            signal = df.loc[i, 'Signal']
+
+            # --- Entry Logic ---
+            if signal == 1 and position is None:
+                entry_date = df.loc[i + 1, 'date']
+                entry_price = df.loc[i + 1, 'open']
+                stop_loss = df.loc[i, 'StopLoss']
+                position_size = df.loc[i, 'PositionSize']
+
+                if position_size > 0:
+                    position = {
+                        "EntryDate": entry_date,
+                        "EntryPrice": entry_price,
+                        "StopLoss": stop_loss,
+                        "Size": position_size
+                    }
+
+            # --- Exit Logic ---
+            elif signal == -1 and position is not None:
+                exit_date = df.loc[i + 1, 'date']
+                exit_price = df.loc[i + 1, 'open']
+
+                pnl = (exit_price - position["EntryPrice"]) * position["Size"]
+                ret_pct = (exit_price - position["EntryPrice"]) / position["EntryPrice"] * 100
+                result = "Win" if pnl > 0 else "Loss"
+
+                trades.append({
+                    "EntryDate": position["EntryDate"],
+                    "ExitDate": exit_date,
+                    "EntryPrice": position["EntryPrice"],
+                    "ExitPrice": exit_price,
+                    "PnL": pnl,
+                    "ReturnPct": ret_pct,
+                    "Result": result
+                })
+
+                capital += pnl
+                position = None
+
+        # --- Metrics Calculation ---
+        total_trades = len(trades)
+        wins = sum(1 for t in trades if t["Result"] == "Win")
+        losses = total_trades - wins
+        win_rate = (wins / total_trades * 100) if total_trades > 0 else 0.0
+        total_pnl = sum(t["PnL"] for t in trades)
 
         return {
-            "Total_Return_Pct": total_return * 100,
-            "Sharpe_Ratio": sharpe,
-            "Equity_Curve": np.exp(results['Strategy_Returns'].cumsum()) * self.initial_capital
+            "TradeLog": pd.DataFrame(trades),
+            "Metrics": {
+                "TotalTrades": total_trades,
+                "Wins": wins,
+                "Losses": losses,
+                "TotalPnL": total_pnl,
+                "WinRatePct": win_rate,
+                "FinalCapital": capital
+            }
         }
-    

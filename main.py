@@ -1,22 +1,41 @@
-import sys
-import pandas as pd
-import os
+"""Tradebot Management Studio - Desktop analytical dashboard application."""
 
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QHBoxLayout,
-    QVBoxLayout, QListWidget, QPushButton, QTabWidget,
-    QLabel, QTableWidget, QMessageBox, QSpinBox, QAbstractItemView, QComboBox
-)
-from PyQt6.QtWebEngineWidgets import QWebEngineView
+import os
+import sys
+
+# pylint: disable=no-name-in-module
+# PyQt6 modules are compiled C/C++ extensions (.pyd), which static analyzers
+# like Pylint cannot inspect without dynamic loading.
+import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from PyQt6.QtCore import Qt
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QComboBox,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QTabWidget,
+    QTableWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from market_repository import MarketRepository
 
 
 class TradingApp(QMainWindow):
+    """Main graphical interface for the Tradebot Management Studio desktop application."""
+
     def __init__(self):
+        """Initialize the main window, data repository, and user interface components."""
         super().__init__()
         self.setWindowTitle('Tradebot Management Studio')
         self.resize(1400, 900)
@@ -25,23 +44,26 @@ class TradingApp(QMainWindow):
         self.check_database_health()
 
     def init_ui(self):
+        """Construct layout, sidebar controls, charts, and data tabs."""
         main_widget = QWidget()
         main_layout = QHBoxLayout(main_widget)
         self.setCentralWidget(main_widget)
 
-        # Sidebar
+        # Sidebar container & layout
         sidebar = QVBoxLayout()
         sidebar_container = QWidget()
         sidebar_container.setFixedWidth(240)
         sidebar_container.setLayout(sidebar)
         main_layout.addWidget(sidebar_container)
 
+        # Asset Watchlist
         sidebar.addWidget(QLabel("<b>Nifty 200 Stocks Asset List</b>"))
         self.ticker_list = QListWidget()
         self.ticker_list.addItems(self.repo.get_tickers())
         self.ticker_list.currentTextChanged.connect(self.refresh_chart)
         sidebar.addWidget(self.ticker_list)
 
+        # Chart Period Selector
         sidebar.addWidget(QLabel('<b>Chart Period</b>'))
         self.period_selector = QComboBox()
         self.period_selector.addItem('1 Month', 1)
@@ -55,17 +77,20 @@ class TradingApp(QMainWindow):
         self.period_selector.currentIndexChanged.connect(self.refresh_chart)
         sidebar.addWidget(self.period_selector)
 
+        # Active Indicator Multi-selection
         sidebar.addWidget(QLabel('<b>Active Indicators</b>'))
         self.indicator_list = QListWidget()
         self.indicator_list.addItems([
             'Stochastic Oscillator',
             'Moving Average'
         ])
-        self.indicator_list.setSelectionMode(self.indicator_list.SelectionMode.MultiSelection)
+        self.indicator_list.setSelectionMode(
+            self.indicator_list.SelectionMode.MultiSelection
+        )
         self.indicator_list.itemSelectionChanged.connect(self.refresh_chart)
         sidebar.addWidget(self.indicator_list)
 
-        # Stochastic parameters
+        # Stochastic Oscillator parameter inputs
         self.stochastic_widget = QWidget()
         stochastic_layout = QVBoxLayout(self.stochastic_widget)
         sidebar.addWidget(self.stochastic_widget)
@@ -92,7 +117,7 @@ class TradingApp(QMainWindow):
         self.k_smooth.valueChanged.connect(self.refresh_chart)
         self.d_smooth.valueChanged.connect(self.refresh_chart)
 
-        # Moving Average parameters
+        # Moving Average parameter inputs
         self.ma_widget = QWidget()
         ma_layout = QVBoxLayout(self.ma_widget)
         sidebar.addWidget(self.ma_widget)
@@ -111,31 +136,38 @@ class TradingApp(QMainWindow):
         self.ma_period.valueChanged.connect(self.refresh_chart)
         self.ma_type.currentIndexChanged.connect(self.refresh_chart)
 
+        # Backtest Action Button
         self.backtest_btn = QPushButton('Execute backtest Matrix')
         sidebar.addWidget(self.backtest_btn)
         sidebar.addStretch()
 
-        # Tabs
+        # Tab Navigation Layout
         self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs)
 
-        # Chart tab with Plotly
+        # Interactive Chart Tab
         self.chart_tab = QWidget()
         chart_tab_layout = QVBoxLayout(self.chart_tab)
         self.plotly_view = QWebEngineView(self.chart_tab)
         chart_tab_layout.addWidget(self.plotly_view)
         self.tabs.addTab(self.chart_tab, 'Analysis Terminal')
 
-        # Other tabs
+        # Morning Scanner Tab
         self.scanner_tab = QTableWidget(10, 4)
-        self.scanner_tab.setHorizontalHeaderLabels(['Ticker', 'Indicator Setup', 'Signal Output', 'Target Action'])
+        self.scanner_tab.setHorizontalHeaderLabels([
+            'Ticker', 'Indicator Setup', 'Signal Output', 'Target Action'
+        ])
         self.tabs.addTab(self.scanner_tab, 'Morning Scanner')
 
+        # Trade Execution Journal Tab
         self.journal_tab = QTableWidget(5, 5)
-        self.journal_tab.setHorizontalHeaderLabels(['Execution Date', 'Ticker', 'Type', 'Entry Price', 'Net PnL (INR)'])
+        self.journal_tab.setHorizontalHeaderLabels([
+            'Execution Date', 'Ticker', 'Type', 'Entry Price', 'Net PnL (INR)'
+        ])
         self.tabs.addTab(self.journal_tab, 'Execution Journal')
 
     def refresh_chart(self):
+        """Update and re-render Plotly chart with candlesticks, volume, and active indicators."""
         item = self.ticker_list.currentItem()
         if item is None:
             return
@@ -143,45 +175,61 @@ class TradingApp(QMainWindow):
         if not display_string:
             return
 
-        horizon_months = self.period_selector.currentData()
-        df = self.repo.get_data(display_string, horizon_months)
-
-        if df.empty:
+        # Always pull full history from repository for accurate indicator calculation
+        df_full = self.repo.get_data(display_string)
+        if df_full.empty:
             print(f"Warning: No database records discovered for {display_string}")
             return
 
-        df = df.copy()
-        df['date'] = pd.to_datetime(df['date'])
+        df_full = df_full.copy()
+        df_full['date'] = pd.to_datetime(df_full['date'])
 
-        # Base subplot layout
+        # Slice data based on selected chart display timeframe
+        horizon_months = self.period_selector.currentData()
+        if horizon_months is not None:  # None corresponds to 'All'
+            cutoff_date = df_full['date'].max() - pd.DateOffset(months=horizon_months)
+            df_display = df_full[df_full['date'] >= cutoff_date].copy()
+        else:
+            df_display = df_full.copy()
+
+        # Build multi-panel subplot layout
         fig = make_subplots(
-            rows=3, cols=1,
+            rows=3,
+            cols=1,
             shared_xaxes=True,
             row_heights=[0.6, 0.2, 0.2],
             vertical_spacing=0.05,
             subplot_titles=("Price", "Volume", "Indicators")
         )
 
-        # Price candlesticks
-        fig.add_trace(go.Candlestick(
-            x=df['date'],
-            open=df['open'],
-            high=df['high'],
-            low=df['low'],
-            close=df['close'],
-            name='Price'
-        ), row=1, col=1)
+        # Subplot 1: Price Candlesticks
+        fig.add_trace(
+            go.Candlestick(
+                x=df_display['date'],
+                open=df_display['open'],
+                high=df_display['high'],
+                low=df_display['low'],
+                close=df_display['close'],
+                name='Price'
+            ),
+            row=1,
+            col=1
+        )
 
-        # Volume bars
-        fig.add_trace(go.Bar(
-            x=df['date'],
-            y=df['volume'],
-            name='Volume',
-            marker_color='lightblue',
-            opacity=0.6
-        ), row=2, col=1)
+        # Subplot 2: Volume Bars
+        fig.add_trace(
+            go.Bar(
+                x=df_display['date'],
+                y=df_display['volume'],
+                name='Volume',
+                marker_color='lightblue',
+                opacity=0.6
+            ),
+            row=2,
+            col=1
+        )
 
-        # Selected indicators
+        # Subplot 3: Technical Indicators
         selected = [item.text() for item in self.indicator_list.selectedItems()]
 
         if 'Stochastic Oscillator' in selected:
@@ -189,53 +237,101 @@ class TradingApp(QMainWindow):
             k_smooth = self.k_smooth.value()
             d_smooth = self.d_smooth.value()
 
-            low_min = df['low'].rolling(window=k_period).min()
-            high_max = df['high'].rolling(window=k_period).max()
-            df['%K'] = 100 * (df['close'] - low_min) / (high_max - low_min)
-            df['%K'] = df['%K'].rolling(window=k_smooth).mean()
-            df['%D'] = df['%K'].rolling(window=d_smooth).mean()
+            low_min = df_full['low'].rolling(window=k_period).min()
+            high_max = df_full['high'].rolling(window=k_period).max()
+            df_full['%K'] = 100 * (df_full['close'] - low_min) / (high_max - low_min)
+            df_full['%K'] = df_full['%K'].rolling(window=k_smooth).mean()
+            df_full['%D'] = df_full['%K'].rolling(window=d_smooth).mean()
 
-            fig.add_trace(go.Scatter(
-                x=df['date'], y=df['%K'], mode='lines', name='%K', line=dict(color='orange')
-            ), row=3, col=1)
-            fig.add_trace(go.Scatter(
-                x=df['date'], y=df['%D'], mode='lines', name='%D', line=dict(color='blue')
-            ), row=3, col=1)
+            # Plot filtered slice
+            fig.add_trace(
+                go.Scatter(
+                    x=df_display['date'],
+                    y=df_full.loc[df_display.index, '%K'],
+                    mode='lines',
+                    name='%K',
+                    line=dict(color='orange')
+                ),
+                row=3,
+                col=1
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=df_display['date'],
+                    y=df_full.loc[df_display.index, '%D'],
+                    mode='lines',
+                    name='%D',
+                    line=dict(color='blue')
+                ),
+                row=3,
+                col=1
+            )
 
-            fig.update_yaxes(title_text="Stochastic", row=3, col=1, tickvals=[0,20,40,60,80,100])
+            fig.update_yaxes(
+                title_text="Stochastic",
+                row=3,
+                col=1,
+                tickvals=[0, 20, 40, 60, 80, 100]
+            )
 
         if 'Moving Average' in selected:
             ma_period = self.ma_period.value()
             ma_type = self.ma_type.currentText()
 
-            if len(df) >= ma_period:
-                if ma_type == 'SMA':
-                    df['MA'] = df['close'].rolling(window=ma_period).mean()
-                else:  # EMA
-                    df['MA'] = df['close'].ewm(span=ma_period, adjust=False).mean()
-
-                fig.add_trace(go.Scatter(
-                    x=df['date'], y=df['MA'], mode='lines',
-                    name=f'{ma_type} {ma_period}', line=dict(color='yellow')
-                ), row=1, col=1)
+            if ma_type == 'SMA':
+                df_full['MA'] = df_full['close'].rolling(window=ma_period).mean()
             else:
-                print(f"Not enough data for {ma_type} {ma_period}")
+                df_full['MA'] = df_full['close'].ewm(span=ma_period, adjust=False).mean()
 
+            # Plot filtered slice
+            fig.add_trace(
+                go.Scatter(
+                    x=df_display['date'],
+                    y=df_full.loc[df_display.index, 'MA'],
+                    mode='lines',
+                    name=f'{ma_type} {ma_period}',
+                    line=dict(color='yellow')
+                ),
+                row=1,
+                col=1
+            )
+
+        # Visual layout configuration
         fig.update_layout(
             template='plotly_dark',
             xaxis_rangeslider_visible=False,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
+            )
         )
-
-        # Axis labels
         fig.update_yaxes(title_text="Price", row=1, col=1)
         fig.update_yaxes(title_text="Volume", row=2, col=1)
 
-        # Render into the PyQt web view
+        if 'Stochastic Oscillator' not in selected:
+            fig.add_trace(
+                go.Scatter(
+                    x=df_display['date'],
+                    y=[None] * len(df_display),
+                    showlegend=False,
+                    hoverinfo='skip'
+                ),
+                row=3,
+                col=1
+            )
+
+        # Always show x-axis ticks at the bottom
+        fig.update_xaxes(title_text="Date", row=3, col=1)
+
+        # Render HTML string into WebEngine view
         html = fig.to_html(include_plotlyjs='cdn')
         self.plotly_view.setHtml(html)
 
     def check_database_health(self):
+        """Verify presence of database file and populated securities on startup."""
         if not os.path.exists(self.repo.db_path):
             QMessageBox.critical(
                 self,
@@ -249,8 +345,14 @@ class TradingApp(QMainWindow):
                 'Connected to tradebot.db successfully, but the "securities" table contains zero rows.'
             )
 
-if __name__ == '__main__':
+
+def main():
+    """Initialize and launch the Tradebot Management Studio application."""
     app = QApplication(sys.argv)
     window = TradingApp()
     window.show()
     sys.exit(app.exec())
+
+
+if __name__ == '__main__':
+    main()
