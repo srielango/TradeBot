@@ -1,8 +1,10 @@
-"""Base strategy abstraction and reference strategy implementations."""
+"""Base strategy abstraction interface for all algorithmic trading strategies."""
 
 from abc import ABC, abstractmethod
 
 import pandas as pd
+
+from config import DEFAULT_INITIAL_CAPITAL, DEFAULT_RISK_PER_TRADE
 
 
 class BaseStrategy(ABC):
@@ -14,45 +16,19 @@ class BaseStrategy(ABC):
         """Return the unique identifier name of the strategy."""
 
     @abstractmethod
-    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Generate indicator values and trading signals on the input OHLCV DataFrame.
+    def generate_signals(
+        self,
+        df: pd.DataFrame,
+        capital: float = DEFAULT_INITIAL_CAPITAL,
+        risk_per_trade: float = DEFAULT_RISK_PER_TRADE,
+    ) -> pd.DataFrame:
+        """Generate indicator values, trading signals, stop loss, and position sizing.
 
         Args:
             df (pd.DataFrame): DataFrame with 'open', 'high', 'low', 'close', and 'volume'.
+            capital (float): Total portfolio capital in INR. Defaults to DEFAULT_INITIAL_CAPITAL.
+            risk_per_trade (float): Fractional risk allocation (e.g. 0.01 for 1%).
 
         Returns:
-            pd.DataFrame: DataFrame with indicators and a 'Signal' column (1, 0, -1).
+            pd.DataFrame: DataFrame with computed indicators, Signal, StopLoss, and PositionSize.
         """
-
-
-class MacdRsiSwing(BaseStrategy):
-    """Example strategy implementation using MACD signal line crossovers."""
-
-    @property
-    def name(self) -> str:
-        """Return strategy name."""
-        return "MACD_RSI_Swing"
-
-    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Generate MACD crossover signals.
-
-        Args:
-            df (pd.DataFrame): Input price DataFrame.
-
-        Returns:
-            pd.DataFrame: DataFrame with computed MACD and Signal columns.
-        """
-        df = df.copy()
-
-        # Compute Fast & Slow Exponential Moving Averages
-        exp1 = df['close'].ewm(span=12, adjust=False).mean()
-        exp2 = df['close'].ewm(span=26, adjust=False).mean()
-        df['MACD'] = exp1 - exp2
-        df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
-
-        # Determine trading signals (1: Buy, -1: Sell, 0: Hold)
-        df['Signal'] = 0
-        df.loc[(df['MACD'] > df['Signal_Line']), 'Signal'] = 1   # Buy signal
-        df.loc[(df['MACD'] < df['Signal_Line']), 'Signal'] = -1  # Sell signal
-
-        return df

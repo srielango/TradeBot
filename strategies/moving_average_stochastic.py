@@ -2,10 +2,8 @@
 
 import pandas as pd
 
-try:
-    from .base_strategy import BaseStrategy
-except ImportError:
-    from base_strategy import BaseStrategy
+from config import DEFAULT_INITIAL_CAPITAL, DEFAULT_RISK_PER_TRADE
+from strategies.base_strategy import BaseStrategy
 
 
 class MovingAverageStochastic(BaseStrategy):
@@ -16,11 +14,18 @@ class MovingAverageStochastic(BaseStrategy):
         """Return unique strategy name."""
         return "MovingAverage_Stochastic"
 
-    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+    def generate_signals(
+        self,
+        df: pd.DataFrame,
+        capital: float = DEFAULT_INITIAL_CAPITAL,
+        risk_per_trade: float = DEFAULT_RISK_PER_TRADE,
+    ) -> pd.DataFrame:
         """Generate trend-filtered Stochastic oversold/overbought signals with position sizing.
 
         Args:
             df (pd.DataFrame): Historical price DataFrame with open, high, low, close.
+            capital (float): Total portfolio capital in INR. Defaults to DEFAULT_INITIAL_CAPITAL.
+            risk_per_trade (float): Fractional portfolio risk allocation per trade.
 
         Returns:
             pd.DataFrame: DataFrame containing indicators, Signal, StopLoss, and PositionSize.
@@ -63,8 +68,7 @@ class MovingAverageStochastic(BaseStrategy):
         df['StopLoss'] = None
         df['PositionSize'] = 0
 
-        capital = 1_000_000
-        risk_per_trade = capital * 0.01  # 1% risk = 10,000 INR
+        risk_amount = capital * risk_per_trade
 
         for i in range(len(df)):
             if df.loc[i, 'Signal'] == 1:
@@ -75,7 +79,7 @@ class MovingAverageStochastic(BaseStrategy):
                     entry = df.loc[i + 1, 'open'] if i + 1 < len(df) else df.loc[i, 'close']
                     risk_per_share = entry - stop
                     if risk_per_share > 0:
-                        position_size = int(risk_per_trade / risk_per_share)
+                        position_size = int(risk_amount / risk_per_share)
                         df.loc[i, 'StopLoss'] = stop
                         df.loc[i, 'PositionSize'] = position_size
 

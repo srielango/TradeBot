@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QMainWindow,
     QMessageBox,
-    QPushButton,
     QSpinBox,
     QTableWidget,
     QTabWidget,
@@ -27,6 +26,7 @@ from PyQt6.QtWidgets import (
 
 from config import DB_PATH
 from market_repository import MarketRepository
+from ui.backtest_tab import BacktestTab
 
 
 class TradingApp(QMainWindow):
@@ -43,16 +43,20 @@ class TradingApp(QMainWindow):
 
     def init_ui(self):
         """Construct layout, sidebar controls, charts, and data tabs."""
-        main_widget = QWidget()
-        main_layout = QHBoxLayout(main_widget)
-        self.setCentralWidget(main_widget)
+        # Tab Navigation Layout
+        self.tabs = QTabWidget()
+        self.setCentralWidget(self.tabs)
 
-        # Sidebar container & layout
+        # Interactive Chart Tab (Analysis Terminal)
+        self.chart_tab = QWidget()
+        chart_tab_layout = QHBoxLayout(self.chart_tab)
+
+        # Sidebar container & layout inside Analysis Terminal
         sidebar = QVBoxLayout()
         sidebar_container = QWidget()
         sidebar_container.setFixedWidth(240)
         sidebar_container.setLayout(sidebar)
-        main_layout.addWidget(sidebar_container)
+        chart_tab_layout.addWidget(sidebar_container)
 
         # Asset Watchlist
         sidebar.addWidget(QLabel("<b>Nifty 200 Stocks Asset List</b>"))
@@ -134,21 +138,16 @@ class TradingApp(QMainWindow):
         self.ma_period.valueChanged.connect(self.refresh_chart)
         self.ma_type.currentIndexChanged.connect(self.refresh_chart)
 
-        # Backtest Action Button
-        self.backtest_btn = QPushButton('Execute backtest Matrix')
-        sidebar.addWidget(self.backtest_btn)
         sidebar.addStretch()
 
-        # Tab Navigation Layout
-        self.tabs = QTabWidget()
-        main_layout.addWidget(self.tabs)
-
-        # Interactive Chart Tab
-        self.chart_tab = QWidget()
-        chart_tab_layout = QVBoxLayout(self.chart_tab)
+        # Interactive Chart View
         self.plotly_view = QWebEngineView(self.chart_tab)
         chart_tab_layout.addWidget(self.plotly_view)
         self.tabs.addTab(self.chart_tab, 'Analysis Terminal')
+
+        # Strategy Backtester Tab
+        self.backtest_tab = BacktestTab(self.repo)
+        self.tabs.addTab(self.backtest_tab, 'Strategy Backtester')
 
         # Morning Scanner Tab
         self.scanner_tab = QTableWidget(10, 4)
