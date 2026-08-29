@@ -159,10 +159,12 @@ class FundamentalScreener:
         if nsei_returns is None or nsei_returns.empty:
             nsei_returns = self.get_nsei_returns(lookback_bars=period + 50)
 
-        if nsei_returns.empty:
-            return None
+        # Align stock and benchmark returns on matching dates (ensure tz compatibility)
+        if hasattr(stock_ret.index, "tz") and stock_ret.index.tz is not None:
+            stock_ret.index = stock_ret.index.tz_localize(None)
+        if hasattr(nsei_returns.index, "tz") and nsei_returns.index.tz is not None:
+            nsei_returns.index = nsei_returns.index.tz_localize(None)
 
-        # Align stock and benchmark returns on matching dates
         aligned = pd.DataFrame({'stock': stock_ret, 'nsei': nsei_returns}).dropna().tail(period)
 
         if len(aligned) < 30:
