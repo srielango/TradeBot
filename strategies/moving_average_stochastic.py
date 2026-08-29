@@ -17,6 +17,7 @@ class MovingAverageStochastic(BaseStrategy):
         d_smooth: int = 3,
         ma_window: int = 200,
         oversold_threshold: float = 20.0,
+        target_profit_pct: float = 0.15,
     ):
         """Initialize technical strategy parameters.
 
@@ -26,12 +27,15 @@ class MovingAverageStochastic(BaseStrategy):
             d_smooth (int): Smoothing factor for %D (default 3).
             ma_window (int): Moving average trend filter period (default 200).
             oversold_threshold (float): Oversold threshold for %K entry trigger (default 20).
+            target_profit_pct (float): Profit target percentage from entry price
+                (default 0.15 / 15%).
         """
         self.k_period = k_period
         self.k_smooth = k_smooth
         self.d_smooth = d_smooth
         self.ma_window = ma_window
         self.oversold_threshold = oversold_threshold
+        self.target_profit_pct = target_profit_pct
 
     @property
     def name(self) -> str:
@@ -45,7 +49,7 @@ class MovingAverageStochastic(BaseStrategy):
         risk_per_trade: float = DEFAULT_RISK_PER_TRADE,
         **kwargs,
     ) -> pd.DataFrame:
-        """Generate trend-filtered Stochastic oversold/overbought signals with position sizing.
+        """Generate trend-filtered Stochastic oversold/overbought signals with 15% profit target.
 
         Args:
             df (pd.DataFrame): Historical price DataFrame with open, high, low, close, volume.
@@ -54,7 +58,8 @@ class MovingAverageStochastic(BaseStrategy):
             **kwargs: Additional optional strategy arguments.
 
         Returns:
-            pd.DataFrame: DataFrame containing indicators, Signal, StopLoss, and PositionSize.
+            pd.DataFrame: DataFrame containing indicators, Signal, StopLoss, TakeProfit,
+                and PositionSize.
         """
         df = df.copy()
 
@@ -89,14 +94,15 @@ class MovingAverageStochastic(BaseStrategy):
             | ((df['%K'].shift(1) > df['%D'].shift(1)) & (df['%K'] < df['%D']))
         )
 
-        # Apply signals
+        # Apply buy & sell signals
         df.loc[buy_condition, 'Signal'] = 1
         df.loc[sell_condition, 'Signal'] = -1
 
-        # --- 4. Stop Loss & Position Sizing ---
+        # --- 4. Stop Loss, Profit Target & Position Sizing ---
         # 5-day swing low calculated from the previous 5 bars
         swing_low = df['low'].shift(1).rolling(window=5, min_periods=1).min()
         df['StopLoss'] = None
+        df['TakeProfit'] = None
         df['PositionSize'] = 0
 
         risk_amount = capital * risk_per_trade
@@ -107,6 +113,7 @@ class MovingAverageStochastic(BaseStrategy):
 
         buy_mask = (df['Signal'] == 1) & (risk_per_share > 0)
         df.loc[buy_mask, 'StopLoss'] = swing_low[buy_mask]
+        df.loc[buy_mask, 'TakeProfit'] = entry_est[buy_mask] * (1.0 + self.target_profit_pct)
         df.loc[buy_mask, 'PositionSize'] = (risk_amount / risk_per_share[buy_mask]).astype(int)
 
         return df

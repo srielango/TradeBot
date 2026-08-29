@@ -170,9 +170,10 @@ def example_fundamental_screener() -> None:
     print("  2. Run Technical Indicators:")
     print("     - 200-day Trend-following Moving Average")
     print("     - Stochastic Oscillator (8, 3, 3) oversold crossover (< 20)")
-    print("  3. Apply Entry Gating & Stop Loss Execution:")
+    print("  3. Stop Loss & Profit Target Execution:")
     print("     - Allow buy entry only when fundamentals pass")
-    print("     - Risk-managed position sizing and 5-day swing low stop-loss")
+    print("     - Stop Loss: 5-day swing low")
+    print("     - Profit Target: Book profit when profit percentage is above 15.0%")
     print("-" * 80)
 
     repo = MarketRepository()

@@ -153,6 +153,10 @@ class BacktestEngine:
                             (exit_price - pos['EntryPrice']) / pos['EntryPrice'] * 100
                         ) if pos['EntryPrice'] > 0 else 0.0
 
+                        target_pct = (
+                            (target_level - pos['EntryPrice']) / pos['EntryPrice'] * 100
+                        ) if pos['EntryPrice'] > 0 else 0.0
+
                         trades.append({
                             "Security": ticker,
                             "EntryDate": pos["EntryDate"],
@@ -163,7 +167,7 @@ class BacktestEngine:
                             "PnL": pnl,
                             "ReturnPct": ret_pct,
                             "Result": "Win" if pnl > 0 else "Loss",
-                            "ExitReason": "Profit Target (9.0%)",
+                            "ExitReason": f"Profit Target ({target_pct:.1f}%)",
                         })
 
                         cash += pos['Size'] * exit_price
