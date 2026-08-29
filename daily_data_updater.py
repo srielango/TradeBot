@@ -129,5 +129,44 @@ def run_daily_sync():
     conn.close()
 
 
-if __name__ == "__main__":
+def update_daily_fundamentals(limit: int | None = None) -> None:
+    """Refresh fundamental analysis metrics for securities after daily price updates.
+
+    Args:
+        limit (int | None): Optional limit on number of securities to sync per run.
+    """
+    from fundamental_screener import FundamentalScreener
+
+    screener = FundamentalScreener()
+
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        query = (
+            "SELECT ticker FROM securities "
+            "WHERE asset_type = 'STOCK' ORDER BY ticker ASC"
+        )
+        if limit:
+            query += f" LIMIT {limit}"
+        cursor.execute(query)
+        tickers = [r[0] for r in cursor.fetchall()]
+
+    print(f"\nStarting daily fundamental refresh for {len(tickers)} stocks...")
+
+    for idx, ticker in enumerate(tickers, start=1):
+        try:
+            metrics = screener.analyze_ticker(ticker, force_refresh=True)
+            status_text = "PASS" if metrics.is_passing else "FAIL"
+            print(f"[{idx}/{len(tickers)}] {ticker:<12} -> Fundamentals synced ({status_text})")
+            time.sleep(0.3)
+        except (sqlite3.Error, OSError, ValueError, KeyError) as err:
+            print(f"Failed updating fundamentals for {ticker}: {err}")
+
+
+def run_full_daily_update() -> None:
+    """Execute complete daily pipeline: price bars sync followed by fundamental metrics update."""
     run_daily_sync()
+    update_daily_fundamentals()
+
+
+if __name__ == "__main__":
+    run_full_daily_update()

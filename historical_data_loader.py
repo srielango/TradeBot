@@ -36,12 +36,43 @@ def create_database():
     );
     """
 
+    sql_create_fundamentals = """
+    CREATE TABLE IF NOT EXISTS security_fundamentals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        security_id INTEGER NOT NULL,
+        ticker TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        market_cap REAL,
+        market_cap_cr REAL,
+        debt_to_equity REAL,
+        peg_ratio REAL,
+        beta_nsei REAL,
+        beta_yf REAL,
+        avg_volume_252 REAL,
+        roe REAL,
+        institutional_ownership REAL,
+        is_passing INTEGER NOT NULL DEFAULT 0,
+        filter_details TEXT,
+        FOREIGN KEY (security_id) REFERENCES securities(id),
+        UNIQUE(security_id)
+    );
+    """
+
     try:
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
 
             cursor.execute(sql_create_securities)
             cursor.execute(sql_create_daily_prices)
+            cursor.execute(sql_create_fundamentals)
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_fundamentals_ticker "
+                "ON security_fundamentals(ticker);"
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_fundamentals_passing "
+                "ON security_fundamentals(is_passing);"
+            )
 
             # Seed target benchmark indices
             for ticker, name in TARGET_INDICES.items():
@@ -224,5 +255,37 @@ def download_and_store_history(ticker: str):
         print(f"Successfully inserted {cursor.rowcount} unique records for {ticker}.")
 
 
+def process_fundamentals_downloads(force_refresh: bool = False) -> None:
+    """Ingest and compute fundamental analysis and benchmark metrics for all stock securities.
+
+    Args:
+        force_refresh (bool): When True, re-downloads and overwrites existing fundamental records.
+    """
+    from fundamental_screener import FundamentalScreener
+
+    screener = FundamentalScreener()
+
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, ticker FROM securities WHERE asset_type = 'STOCK' ORDER BY ticker ASC"
+        )
+        stock_list = cursor.fetchall()
+
+    print(f"Starting fundamental ingestion for {len(stock_list)} stock securities...")
+
+    for idx, (_, ticker) in enumerate(stock_list, start=1):
+        try:
+            print(f"[{idx}/{len(stock_list)}] Analyzing fundamentals for {ticker}...")
+            metrics = screener.analyze_ticker(ticker, force_refresh=force_refresh)
+            status_text = "PASS" if metrics.is_passing else "FAIL"
+            print(f"    -> Status: {status_text} | MCap: {metrics.market_cap_cr} Cr")
+            time.sleep(0.3)
+        except (sqlite3.Error, OSError, ValueError, KeyError) as err:
+            print(f"    -> Failed analyzing {ticker}: {err}")
+
+
 if __name__ == "__main__":
+    create_database()
     process_historical_downloads()
+    process_fundamentals_downloads()

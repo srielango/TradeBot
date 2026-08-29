@@ -79,3 +79,33 @@ class MarketRepository:
         except sqlite3.Error as err:
             print(f"Database error while loading daily prices: {err}")
             return pd.DataFrame()
+
+    def get_fundamentals(self, display_string: str) -> dict | None:
+        """Fetch cached fundamental metrics for a selected security.
+
+        Args:
+            display_string (str): Formatted ticker string from UI, e.g. 'INFY.NS (STOCK)'.
+
+        Returns:
+            dict | None: Dictionary of fundamental attributes or None if unpopulated.
+        """
+        if not display_string:
+            return None
+
+        ticker = display_string.split(" ")[0]
+        query = """
+            SELECT market_cap_cr, debt_to_equity, peg_ratio, beta_nsei,
+                   beta_yf, avg_volume_252, roe, institutional_ownership,
+                   is_passing, updated_at
+            FROM security_fundamentals
+            WHERE ticker = ?
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                df = pd.read_sql_query(query, conn, params=[ticker])
+            if df.empty:
+                return None
+            return df.iloc[0].to_dict()
+        except sqlite3.Error as err:
+            print(f"Database error while fetching fundamentals for {ticker}: {err}")
+            return None

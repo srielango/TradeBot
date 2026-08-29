@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 from config import DB_PATH
 from market_repository import MarketRepository
 from ui.backtest_tab import BacktestTab
+from ui.fundamental_screener_tab import FundamentalScreenerTab
 
 
 class TradingApp(QMainWindow):
@@ -149,6 +150,11 @@ class TradingApp(QMainWindow):
         self.backtest_tab = BacktestTab(self.repo)
         self.tabs.addTab(self.backtest_tab, 'Strategy Backtester')
 
+        # Fundamental Screener Tab
+        self.screener_tab = FundamentalScreenerTab(self.repo)
+        self.screener_tab.ticker_selected.connect(self.on_screener_ticker_selected)
+        self.tabs.addTab(self.screener_tab, 'Fundamental Screener')
+
         # Morning Scanner Tab
         self.scanner_tab = QTableWidget(10, 4)
         self.scanner_tab.setHorizontalHeaderLabels([
@@ -162,6 +168,15 @@ class TradingApp(QMainWindow):
             'Execution Date', 'Ticker', 'Type', 'Entry Price', 'Net PnL (INR)',
         ])
         self.tabs.addTab(self.journal_tab, 'Execution Journal')
+
+    def on_screener_ticker_selected(self, ticker_str: str) -> None:
+        """Handle ticker double-click from Fundamental Screener tab by switching to Backtest.
+
+        Args:
+            ticker_str (str): Selected ticker string, e.g. 'INFY.NS (STOCK)'.
+        """
+        self.backtest_tab.set_active_ticker(ticker_str)
+        self.tabs.setCurrentWidget(self.backtest_tab)
 
     def refresh_chart(self):
         """Update and re-render Plotly chart with candlesticks, volume, and indicators."""

@@ -19,6 +19,7 @@ class MacdRsiSwing(BaseStrategy):
         df: pd.DataFrame,
         capital: float = DEFAULT_INITIAL_CAPITAL,
         risk_per_trade: float = DEFAULT_RISK_PER_TRADE,
+        **kwargs,
     ) -> pd.DataFrame:
         """Generate MACD crossover signals with risk-based position sizing and stop loss.
 

@@ -94,6 +94,16 @@ class BacktestTab(QWidget):
 
         main_layout.addWidget(config_group)
 
+        # Status & Diagnostic Banner
+        self.fundamental_status_label = QLabel(
+            "<b>Fundamental Screen:</b> Ready. Run backtest to analyze security metrics."
+        )
+        self.fundamental_status_label.setStyleSheet(
+            "QLabel { background-color: #1e2227; color: #abb2bf; border: 1px solid #3b4048; "
+            "border-radius: 4px; padding: 6px 10px; font-size: 11px; }"
+        )
+        main_layout.addWidget(self.fundamental_status_label)
+
         # --- Section 2: KPI Metrics Cards ---
         metrics_group = QGroupBox("Performance Summary")
         metrics_layout = QGridLayout(metrics_group)
@@ -227,6 +237,47 @@ class BacktestTab(QWidget):
             capital=capital,
             risk_per_trade=risk_per_trade,
         )
+
+        # Display security fundamental snapshot from repository cache if available
+        fund_data = self.repo.get_fundamentals(ticker_display)
+        if fund_data:
+            beta_val = fund_data.get("beta_nsei") or fund_data.get("beta_yf")
+            beta_str = f"{beta_val:.2f}" if beta_val is not None else "N/A"
+            mcap_str = (
+                f"₹ {fund_data['market_cap_cr']:,.0f} Cr"
+                if fund_data.get("market_cap_cr")
+                else "N/A"
+            )
+            de_str = (
+                f"{fund_data['debt_to_equity']:.2f}"
+                if fund_data.get("debt_to_equity") is not None
+                else "N/A"
+            )
+            peg_str = (
+                f"{fund_data['peg_ratio']:.2f}"
+                if fund_data.get("peg_ratio") is not None
+                else "N/A"
+            )
+            vol_str = (
+                f"{int(fund_data['avg_volume_252']):,}"
+                if fund_data.get("avg_volume_252")
+                else "N/A"
+            )
+            inst_str = (
+                f"{fund_data['institutional_ownership'] * 100:.1f}%"
+                if fund_data.get("institutional_ownership")
+                else "N/A"
+            )
+            self.fundamental_status_label.setText(
+                f"<b>Security Fundamentals:</b> <b>MCap:</b> {mcap_str} | "
+                f"<b>D/E:</b> {de_str} | <b>PEG:</b> {peg_str} | "
+                f"<b>Beta (^NSEI):</b> {beta_str} | <b>252d Avg Vol:</b> {vol_str} | "
+                f"<b>Inst Own:</b> {inst_str}"
+            )
+        else:
+            self.fundamental_status_label.setText(
+                "<b>Security Fundamentals:</b> No cached fundamental snapshot."
+            )
 
         # Configure and execute backtesting engine
         engine = BacktestEngine(initial_capital=capital, risk_per_trade=risk_per_trade)
