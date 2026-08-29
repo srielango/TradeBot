@@ -60,7 +60,7 @@ class TradingApp(QMainWindow):
         chart_tab_layout.addWidget(sidebar_container)
 
         # Asset Watchlist
-        sidebar.addWidget(QLabel("<b>Nifty 200 Stocks Asset List</b>"))
+        sidebar.addWidget(QLabel("<b>Nifty 50 Stocks Asset List</b>"))
         self.ticker_list = QListWidget()
         self.ticker_list.addItems(self.repo.get_tickers())
         self.ticker_list.currentTextChanged.connect(self.refresh_chart)

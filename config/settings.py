@@ -15,6 +15,7 @@ RESOURCES_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "tradebot.db"
 
 # Data assets
+NIFTY50_CSV_PATH = RESOURCES_DIR / "ind_nifty50list.csv"
 NIFTY200_CSV_PATH = RESOURCES_DIR / "ind_nifty200list.csv"
 
 # Portfolio & Risk Management Defaults

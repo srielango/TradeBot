@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import yfinance as yf
 
-from config import DB_PATH, NIFTY200_CSV_PATH, TARGET_INDICES
+from config import DB_PATH, NIFTY50_CSV_PATH, TARGET_INDICES
 
 
 def create_database():
@@ -84,10 +84,10 @@ def create_database():
                     (ticker, name),
                 )
 
-            # Seed constituents from Nifty 200 list
-            df_n200 = pd.read_csv(NIFTY200_CSV_PATH)
-            print("Reading Nifty 200 list...")
-            for _, row in df_n200.iterrows():
+            # Seed constituents from Nifty 50 list
+            df_n50 = pd.read_csv(NIFTY50_CSV_PATH)
+            print("Reading Nifty 50 list...")
+            for _, row in df_n50.iterrows():
                 raw_symbol = row['Symbol'].strip()
                 company_name = row['Company Name'].strip()
                 yf_ticker = f"{raw_symbol}.NS"
@@ -101,7 +101,7 @@ def create_database():
                 )
 
             conn.commit()
-            print("Successfully seeded master list with Nifty 200 constituents.")
+            print("Successfully seeded master list with Nifty 50 constituents.")
 
     except sqlite3.Error as err:
         print(f"An error occurred during database creation: {err}")
