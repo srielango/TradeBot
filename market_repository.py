@@ -109,3 +109,57 @@ class MarketRepository:
         except sqlite3.Error as err:
             print(f"Database error while fetching fundamentals for {ticker}: {err}")
             return None
+
+    def get_stock_tickers(self) -> list[str]:
+        """Fetch list of all active equity stock tickers (asset_type = 'STOCK').
+
+        Returns:
+            list[str]: Formatted ticker strings with asset type, e.g. 'RELIANCE.NS (STOCK)'.
+        """
+        query = """
+            SELECT ticker, name, asset_type
+            FROM securities
+            WHERE asset_type = 'STOCK'
+            ORDER BY ticker ASC
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                df = pd.read_sql_query(query, conn)
+                return [
+                    f"{row['ticker']} ({row['asset_type']})"
+                    for _, row in df.iterrows()
+                ]
+        except sqlite3.Error as err:
+            print(f"Database error while fetching stock tickers: {err}")
+            return []
+
+    def get_all_stocks_data(self) -> dict[str, pd.DataFrame]:
+        """Fetch historical daily price records for all active stocks in a single bulk query.
+
+        Returns:
+            dict[str, pd.DataFrame]: Dictionary mapping ticker symbol to OHLCV DataFrame.
+        """
+        query = """
+            SELECT s.ticker, p.date, p.open, p.high, p.low, p.close, p.volume
+            FROM daily_prices p
+            JOIN securities s ON p.security_id = s.id
+            WHERE s.asset_type = 'STOCK'
+            ORDER BY s.ticker ASC, p.date ASC
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                df = pd.read_sql_query(query, conn)
+
+            if df.empty:
+                return {}
+
+            df.columns = df.columns.str.lower()
+            stocks_data = {}
+            for ticker, group in df.groupby("ticker"):
+                group_clean = group.drop(columns=["ticker"]).reset_index(drop=True)
+                stocks_data[str(ticker)] = group_clean
+            return stocks_data
+
+        except sqlite3.Error as err:
+            print(f"Database error while loading all stock prices: {err}")
+            return {}

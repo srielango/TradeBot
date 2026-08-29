@@ -1,5 +1,7 @@
 """Backtesting tab component for TradeBot dashboard."""
 
+import pandas as pd
+
 # pylint: disable=no-name-in-module
 # PyQt6 modules are compiled C/C++ extensions (.pyd), which static analyzers
 # like Pylint cannot inspect without dynamic loading.
@@ -8,6 +10,7 @@ from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QGroupBox,
@@ -39,6 +42,8 @@ class BacktestTab(QWidget):
         """
         super().__init__()
         self.repo = repo
+        self.current_trade_log = pd.DataFrame()
+        self.current_metrics = {}
         self.init_ui()
 
     def init_ui(self):
@@ -58,7 +63,7 @@ class BacktestTab(QWidget):
         self.strategy_selector.addItems(list(STRATEGY_REGISTRY.keys()))
         config_layout.addWidget(self.strategy_selector)
 
-        # Security / Ticker Selector
+        # Security / Ticker Selector (Defaults to 'All Stocks')
         config_layout.addWidget(QLabel("<b>Security:</b>"))
         self.ticker_selector = QComboBox()
         self.populate_tickers()
@@ -96,7 +101,7 @@ class BacktestTab(QWidget):
 
         # Status & Diagnostic Banner
         self.fundamental_status_label = QLabel(
-            "<b>Fundamental Screen:</b> Ready. Run backtest to analyze security metrics."
+            "<b>Backtest Engine:</b> Ready. Click 'Run Backtest' to simulate strategy execution."
         )
         self.fundamental_status_label.setStyleSheet(
             "QLabel { background-color: #1e2227; color: #abb2bf; border: 1px solid #3b4048; "
@@ -131,9 +136,39 @@ class BacktestTab(QWidget):
         log_group = QGroupBox("Trade Execution Journal")
         log_layout = QVBoxLayout(log_group)
 
+        # Header toolbar inside log group with count label and export buttons
+        table_controls_layout = QHBoxLayout()
+        table_controls_layout.setContentsMargins(0, 0, 0, 4)
+
+        self.table_count_label = QLabel("<b>0</b> trades executed")
+        self.table_count_label.setStyleSheet("color: #9da5b4; font-size: 12px;")
+        table_controls_layout.addWidget(self.table_count_label)
+        table_controls_layout.addStretch()
+
+        self.btn_export_csv = QPushButton("Export to CSV")
+        self.btn_export_csv.setStyleSheet(
+            "QPushButton { background-color: #3b4048; color: #abb2bf; font-weight: bold; "
+            "padding: 5px 12px; border-radius: 4px; border: 1px solid #4b5263; } "
+            "QPushButton:hover { background-color: #4b5263; color: white; }"
+        )
+        self.btn_export_csv.clicked.connect(self.export_to_csv)
+        table_controls_layout.addWidget(self.btn_export_csv)
+
+        self.btn_export_excel = QPushButton("Export to Excel")
+        self.btn_export_excel.setStyleSheet(
+            "QPushButton { background-color: #1976d2; color: white; font-weight: bold; "
+            "padding: 5px 12px; border-radius: 4px; border: 1px solid #1e88e5; } "
+            "QPushButton:hover { background-color: #1e88e5; }"
+        )
+        self.btn_export_excel.clicked.connect(self.export_to_excel)
+        table_controls_layout.addWidget(self.btn_export_excel)
+
+        log_layout.addLayout(table_controls_layout)
+
         self.table = QTableWidget()
-        self.table.setColumnCount(8)
+        self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels([
+            "Security",
             "Entry Date",
             "Exit Date",
             "Position Size",
@@ -189,10 +224,12 @@ class BacktestTab(QWidget):
         return {"frame": frame, "value_label": value_label}
 
     def populate_tickers(self):
-        """Populate the security selector dropdown from database."""
-        tickers = self.repo.get_tickers()
+        """Populate the security selector dropdown with 'All Stocks' as the default."""
         self.ticker_selector.clear()
+        self.ticker_selector.addItem("All Stocks")
+        tickers = self.repo.get_tickers()
         self.ticker_selector.addItems(tickers)
+        self.ticker_selector.setCurrentIndex(0)
 
     def set_active_ticker(self, ticker_str: str):
         """Programmatically select a ticker in the dropdown.
@@ -205,7 +242,7 @@ class BacktestTab(QWidget):
             self.ticker_selector.setCurrentIndex(index)
 
     def execute_backtest(self):
-        """Execute selected strategy backtest on chosen security and update UI."""
+        """Execute selected strategy backtest on chosen security or all stocks and update UI."""
         strategy_name = self.strategy_selector.currentText()
         ticker_display = self.ticker_selector.currentText()
 
@@ -213,16 +250,6 @@ class BacktestTab(QWidget):
             QMessageBox.warning(self, "Selection Error", "Please select a security from the list.")
             return
 
-        df_raw = self.repo.get_data(ticker_display)
-        if df_raw.empty:
-            QMessageBox.warning(
-                self,
-                "No Data Found",
-                f"No price records discovered in database for {ticker_display}.",
-            )
-            return
-
-        # Instantiate selected strategy
         strategy_class = STRATEGY_REGISTRY.get(strategy_name)
         if not strategy_class:
             QMessageBox.critical(self, "Error", f"Strategy '{strategy_name}' not found.")
@@ -230,61 +257,111 @@ class BacktestTab(QWidget):
 
         capital = self.capital_input.value()
         risk_per_trade = self.risk_input.value() / 100.0
-
         strategy = strategy_class()
-        signals_df = strategy.generate_signals(
-            df_raw,
-            capital=capital,
-            risk_per_trade=risk_per_trade,
-        )
 
-        # Display security fundamental snapshot from repository cache if available
-        fund_data = self.repo.get_fundamentals(ticker_display)
-        if fund_data:
-            beta_val = fund_data.get("beta_nsei") or fund_data.get("beta_yf")
-            beta_str = f"{beta_val:.2f}" if beta_val is not None else "N/A"
-            mcap_str = (
-                f"₹ {fund_data['market_cap_cr']:,.0f} Cr"
-                if fund_data.get("market_cap_cr")
-                else "N/A"
-            )
-            de_str = (
-                f"{fund_data['debt_to_equity']:.2f}"
-                if fund_data.get("debt_to_equity") is not None
-                else "N/A"
-            )
-            peg_str = (
-                f"{fund_data['peg_ratio']:.2f}"
-                if fund_data.get("peg_ratio") is not None
-                else "N/A"
-            )
-            vol_str = (
-                f"{int(fund_data['avg_volume_252']):,}"
-                if fund_data.get("avg_volume_252")
-                else "N/A"
-            )
-            inst_str = (
-                f"{fund_data['institutional_ownership'] * 100:.1f}%"
-                if fund_data.get("institutional_ownership")
-                else "N/A"
-            )
+        if ticker_display == "All Stocks":
+            # Retrieve all stock prices in bulk
+            stocks_data = self.repo.get_all_stocks_data()
+            if not stocks_data:
+                QMessageBox.warning(
+                    self,
+                    "No Data Found",
+                    "No price records discovered in database for stocks.",
+                )
+                return
+
+            # Compute signals for each security
+            signals_dict = {}
+            for ticker_symbol, df_raw in stocks_data.items():
+                signals_dict[ticker_symbol] = strategy.generate_signals(
+                    df_raw,
+                    capital=capital,
+                    risk_per_trade=risk_per_trade,
+                )
+
             self.fundamental_status_label.setText(
-                f"<b>Security Fundamentals:</b> <b>MCap:</b> {mcap_str} | "
-                f"<b>D/E:</b> {de_str} | <b>PEG:</b> {peg_str} | "
-                f"<b>Beta (^NSEI):</b> {beta_str} | <b>252d Avg Vol:</b> {vol_str} | "
-                f"<b>Inst Own:</b> {inst_str}"
+                f"<b>Multi-Asset Mode:</b> Strategy executed across <b>{len(stocks_data)}</b> "
+                f"securities with <b>10%</b> capital allocation per position."
             )
+
+            engine = BacktestEngine(
+                initial_capital=capital,
+                risk_per_trade=risk_per_trade,
+                allocation_fraction=0.10,
+            )
+            results = engine.run_portfolio(signals_dict)
+
         else:
-            self.fundamental_status_label.setText(
-                "<b>Security Fundamentals:</b> No cached fundamental snapshot."
+            # Single security backtest
+            df_raw = self.repo.get_data(ticker_display)
+            if df_raw.empty:
+                QMessageBox.warning(
+                    self,
+                    "No Data Found",
+                    f"No price records discovered in database for {ticker_display}.",
+                )
+                return
+
+            signals_df = strategy.generate_signals(
+                df_raw,
+                capital=capital,
+                risk_per_trade=risk_per_trade,
             )
 
-        # Configure and execute backtesting engine
-        engine = BacktestEngine(initial_capital=capital, risk_per_trade=risk_per_trade)
-        results = engine.run(signals_df)
+            # Display security fundamental snapshot from repository cache if available
+            fund_data = self.repo.get_fundamentals(ticker_display)
+            if fund_data:
+                beta_val = fund_data.get("beta_nsei") or fund_data.get("beta_yf")
+                beta_str = f"{beta_val:.2f}" if beta_val is not None else "N/A"
+                mcap_str = (
+                    f"₹ {fund_data['market_cap_cr']:,.0f} Cr"
+                    if fund_data.get("market_cap_cr")
+                    else "N/A"
+                )
+                de_str = (
+                    f"{fund_data['debt_to_equity']:.2f}"
+                    if fund_data.get("debt_to_equity") is not None
+                    else "N/A"
+                )
+                peg_str = (
+                    f"{fund_data['peg_ratio']:.2f}"
+                    if fund_data.get("peg_ratio") is not None
+                    else "N/A"
+                )
+                vol_str = (
+                    f"{int(fund_data['avg_volume_252']):,}"
+                    if fund_data.get("avg_volume_252")
+                    else "N/A"
+                )
+                inst_str = (
+                    f"{fund_data['institutional_ownership'] * 100:.1f}%"
+                    if fund_data.get("institutional_ownership")
+                    else "N/A"
+                )
+                self.fundamental_status_label.setText(
+                    f"<b>Security Fundamentals:</b> <b>MCap:</b> {mcap_str} | "
+                    f"<b>D/E:</b> {de_str} | <b>PEG:</b> {peg_str} | "
+                    f"<b>Beta (^NSEI):</b> {beta_str} | <b>252d Avg Vol:</b> {vol_str} | "
+                    f"<b>Inst Own:</b> {inst_str}"
+                )
+            else:
+                self.fundamental_status_label.setText(
+                    "<b>Security Fundamentals:</b> No cached fundamental snapshot."
+                )
+
+            ticker_clean = ticker_display.split(" ")[0]
+            engine = BacktestEngine(
+                initial_capital=capital,
+                risk_per_trade=risk_per_trade,
+                allocation_fraction=0.10,
+            )
+            results = engine.run(signals_df, ticker=ticker_clean)
 
         metrics = results["Metrics"]
         trade_log = results["TradeLog"]
+
+        self.current_trade_log = trade_log
+        self.current_metrics = metrics
 
         # Update KPI Summary Cards
         self.update_metrics(metrics)
@@ -317,7 +394,7 @@ class BacktestTab(QWidget):
         self.card_losses["value_label"].setText(str(losses))
         self.card_final_capital["value_label"].setText(f"₹ {final_cap:,.2f}")
 
-    def populate_trade_table(self, trade_log):
+    def populate_trade_table(self, trade_log: pd.DataFrame):
         """Populate the trade execution journal table with trade log rows.
 
         Args:
@@ -325,11 +402,14 @@ class BacktestTab(QWidget):
         """
         self.table.setRowCount(0)
         if trade_log.empty:
+            self.table_count_label.setText("<b>0</b> trades executed")
             return
 
+        self.table_count_label.setText(f"<b>{len(trade_log):,}</b> trades executed")
         self.table.setRowCount(len(trade_log))
 
         for row_idx, (_, row) in enumerate(trade_log.iterrows()):
+            security = str(row.get("Security", ""))
             entry_date = str(row["EntryDate"])[:10]
             exit_date = str(row["ExitDate"])[:10]
             pos_size = f"{int(row['PositionSize']):,}"
@@ -342,6 +422,7 @@ class BacktestTab(QWidget):
             result_str = f"{row['Result']} ({exit_reason})"
 
             items = [
+                QTableWidgetItem(security),
                 QTableWidgetItem(entry_date),
                 QTableWidgetItem(exit_date),
                 QTableWidgetItem(pos_size),
@@ -355,11 +436,141 @@ class BacktestTab(QWidget):
             # Text alignment and color-coding
             for col_idx, item in enumerate(items):
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                if col_idx in (5, 6):  # PnL & Return %
+                if col_idx in (6, 7):  # PnL & Return %
                     color = QColor(76, 175, 80) if pnl_val >= 0 else QColor(244, 67, 54)
                     item.setForeground(color)
-                elif col_idx == 7:  # Result badge
+                elif col_idx == 8:  # Result badge
                     color = QColor(76, 175, 80) if row["Result"] == "Win" else QColor(244, 67, 54)
                     item.setForeground(color)
 
                 self.table.setItem(row_idx, col_idx, item)
+
+    def export_to_csv(self):
+        """Export current backtest trade log to a CSV file."""
+        if self.current_trade_log.empty:
+            QMessageBox.information(
+                self,
+                "No Data to Export",
+                "There are no trade records to export. Please run a backtest first.",
+            )
+            return
+
+        strategy_name = self.strategy_selector.currentText().replace(" ", "_").replace("/", "_")
+        ticker = self.ticker_selector.currentText().split(" ")[0]
+        default_filename = f"backtest_trades_{strategy_name}_{ticker}.csv"
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Trade Journal as CSV",
+            default_filename,
+            "CSV Files (*.csv);;All Files (*)",
+        )
+
+        if not file_path:
+            return
+
+        try:
+            self.current_trade_log.to_csv(file_path, index=False)
+            QMessageBox.information(
+                self,
+                "Export Successful",
+                f"Successfully exported {len(self.current_trade_log)} trades to:\n{file_path}",
+            )
+        except Exception as err:
+            QMessageBox.critical(
+                self,
+                "Export Failed",
+                f"Failed to export CSV file:\n{err}",
+            )
+
+    def export_to_excel(self):
+        """Export current backtest trade log and performance metrics to an Excel workbook."""
+        if self.current_trade_log.empty:
+            QMessageBox.information(
+                self,
+                "No Data to Export",
+                "There are no trade records to export. Please run a backtest first.",
+            )
+            return
+
+        strategy_name = self.strategy_selector.currentText().replace(" ", "_").replace("/", "_")
+        ticker = self.ticker_selector.currentText().split(" ")[0]
+        default_filename = f"backtest_trades_{strategy_name}_{ticker}.xlsx"
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Trade Journal as Excel",
+            default_filename,
+            "Excel Files (*.xlsx);;All Files (*)",
+        )
+
+        if not file_path:
+            return
+
+        try:
+            with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
+                # Sheet 1: Detailed Trade Log
+                self.current_trade_log.to_excel(writer, sheet_name="Trade Journal", index=False)
+
+                # Sheet 2: Summary Metrics & Parameters
+                if self.current_metrics:
+                    summary_rows = [
+                        {
+                            "Parameter / Metric": "Strategy",
+                            "Value": self.strategy_selector.currentText(),
+                        },
+                        {
+                            "Parameter / Metric": "Security",
+                            "Value": self.ticker_selector.currentText(),
+                        },
+                        {
+                            "Parameter / Metric": "Initial Capital (INR)",
+                            "Value": self.capital_input.value(),
+                        },
+                        {
+                            "Parameter / Metric": "Risk Per Trade (%)",
+                            "Value": self.risk_input.value(),
+                        },
+                        {
+                            "Parameter / Metric": "Total Trades",
+                            "Value": self.current_metrics.get("TotalTrades", 0),
+                        },
+                        {
+                            "Parameter / Metric": "Winning Trades",
+                            "Value": self.current_metrics.get("Wins", 0),
+                        },
+                        {
+                            "Parameter / Metric": "Losing Trades",
+                            "Value": self.current_metrics.get("Losses", 0),
+                        },
+                        {
+                            "Parameter / Metric": "Win Rate (%)",
+                            "Value": f"{self.current_metrics.get('WinRatePct', 0.0):.2f}",
+                        },
+                        {
+                            "Parameter / Metric": "Total PnL (INR)",
+                            "Value": self.current_metrics.get("TotalPnL", 0.0),
+                        },
+                        {
+                            "Parameter / Metric": "Final Capital (INR)",
+                            "Value": self.current_metrics.get("FinalCapital", 0.0),
+                        },
+                    ]
+                    pd.DataFrame(summary_rows).to_excel(
+                        writer,
+                        sheet_name="Performance Summary",
+                        index=False,
+                    )
+
+            QMessageBox.information(
+                self,
+                "Export Successful",
+                f"Successfully exported {len(self.current_trade_log)} trades "
+                f"and summary metrics to:\n{file_path}",
+            )
+        except Exception as err:
+            QMessageBox.critical(
+                self,
+                "Export Failed",
+                f"Failed to export Excel file:\n{err}",
+            )

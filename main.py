@@ -22,6 +22,50 @@ def example_trading_dashboard() -> None:
     sys.exit(app.exec())
 
 
+def example_all_stocks_backtest() -> None:
+    """Showcase multi-stock portfolio strategy backtest across all stocks with 10% allocation."""
+    print("=" * 80)
+    print("MULTI-STOCK STRATEGY BACKTEST (ALL STOCKS - 10% CAPITAL ALLOCATION)")
+    print("=" * 80)
+
+    repo = MarketRepository()
+    stocks_data = repo.get_all_stocks_data()
+    print(f"Loaded price records for {len(stocks_data)} active stocks from database.")
+
+    strategy = MovingAverageStochastic()
+    print(f"Generating signals using strategy: {strategy.name}...")
+
+    signals_dict = {}
+    for ticker, df in stocks_data.items():
+        signals_dict[ticker] = strategy.generate_signals(df)
+
+    engine = BacktestEngine(
+        initial_capital=1_000_000.0,
+        allocation_fraction=0.10,
+    )
+    results = engine.run_portfolio(signals_dict)
+
+    m = results["Metrics"]
+    trade_log = results["TradeLog"]
+
+    print("\n[Performance Metrics Summary]:")
+    print(f"  Total Trades   : {m['TotalTrades']}")
+    print(f"  Winning Trades : {m['Wins']}")
+    print(f"  Losing Trades  : {m['Losses']}")
+    print(f"  Win Rate       : {m['WinRatePct']:.1f} %")
+    print(f"  Total PnL      : INR {m['TotalPnL']:+,.2f}")
+    print(f"  Final Capital  : INR {m['FinalCapital']:,.2f}")
+
+    if not trade_log.empty:
+        print("\n[Recent Trades Sample (Last 10)]:")
+        display_cols = [
+            "Security", "EntryDate", "ExitDate", "PositionSize",
+            "EntryPrice", "ExitPrice", "PnL", "ReturnPct", "Result", "ExitReason",
+        ]
+        sample_df = trade_log[display_cols].tail(10)
+        print(sample_df.to_string(index=False))
+
+
 def example_fundamental_screener() -> None:
     """Showcase fundamental screening and Moving Average + Stochastic strategy execution."""
     print("=" * 80)
@@ -93,7 +137,7 @@ def example_fundamental_screener() -> None:
 
         signals_df = strategy.generate_signals(df)
         engine = BacktestEngine()
-        results = engine.run(signals_df)
+        results = engine.run(signals_df, ticker=ticker)
         m = results['Metrics']
 
         pnl_str = f"INR {m['TotalPnL']:>11,.2f}"
@@ -107,7 +151,9 @@ def example_fundamental_screener() -> None:
 
 def main() -> None:
     """Initialize and showcase the primary application functionality."""
-    if "--cli" in sys.argv or "--screener" in sys.argv:
+    if "--backtest" in sys.argv or "--all-stocks" in sys.argv:
+        example_all_stocks_backtest()
+    elif "--cli" in sys.argv or "--screener" in sys.argv:
         example_fundamental_screener()
     else:
         example_trading_dashboard()

@@ -6,11 +6,13 @@ from typing import Any, Optional
 # pylint: disable=no-name-in-module
 # PyQt6 modules are compiled C/C++ extensions (.pyd), which static analyzers
 # like Pylint cannot inspect without dynamic loading.
+import pandas as pd
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
+    QFileDialog,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -81,6 +83,7 @@ class FundamentalScreenerTab(QWidget):
         self.screener = FundamentalScreener(self.repo.db_path)
         self.sync_worker: Optional[FundamentalSyncWorker] = None
         self.all_securities: list[dict[str, Any]] = []
+        self.current_rows_data: list[dict[str, Any]] = []
 
         self.init_ui()
         self.load_securities_data()
@@ -248,6 +251,26 @@ class FundamentalScreenerTab(QWidget):
         self.btn_sync.clicked.connect(self.start_online_sync)
         toolbar_layout.addWidget(self.btn_sync)
 
+        # Export CSV Button
+        self.btn_export_csv = QPushButton("Export CSV")
+        self.btn_export_csv.setStyleSheet(
+            "QPushButton { background-color: #3b4048; color: #abb2bf; font-weight: bold; "
+            "padding: 6px 12px; border-radius: 4px; border: 1px solid #4b5263; } "
+            "QPushButton:hover { background-color: #4b5263; color: white; }"
+        )
+        self.btn_export_csv.clicked.connect(self.export_to_csv)
+        toolbar_layout.addWidget(self.btn_export_csv)
+
+        # Export Excel Button
+        self.btn_export_excel = QPushButton("Export Excel")
+        self.btn_export_excel.setStyleSheet(
+            "QPushButton { background-color: #2e7d32; color: white; font-weight: bold; "
+            "padding: 6px 12px; border-radius: 4px; border: 1px solid #388e3c; } "
+            "QPushButton:hover { background-color: #388e3c; }"
+        )
+        self.btn_export_excel.clicked.connect(self.export_to_excel)
+        toolbar_layout.addWidget(self.btn_export_excel)
+
         main_layout.addLayout(toolbar_layout)
 
         # Progress Bar for background download
@@ -406,11 +429,10 @@ class FundamentalScreenerTab(QWidget):
                     "inst": pass_inst,
                     "roe": pass_roe,
                 },
-            })
-
-        # Update Summary Label
+            })        # Update Summary Label
         total_total = len(self.all_securities)
         matched_count = len(matching_rows)
+        self.current_rows_data = matching_rows
         self.summary_label.setText(
             f"Showing {matched_count} stocks | Passing Criteria: {passing_count} / {total_total} "
             f"({(passing_count / total_total * 100) if total_total else 0.0:.1f}%) | "
@@ -460,40 +482,53 @@ class FundamentalScreenerTab(QWidget):
                 QTableWidgetItem(status_str),
             ]
 
-            # Text alignment
+            # Style alignment and colors
             for col_idx, widget_item in enumerate(items):
                 if col_idx in (0, 1):
-                    align = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-                    widget_item.setTextAlignment(align)
+                    widget_item.setTextAlignment(
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+                    )
                 else:
                     widget_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
-            # Color-code individual metrics based on compliance
-            color_pass = QColor(76, 175, 80)
-            color_fail = QColor(229, 115, 115)
+                # Color-code individual metric cells based on check thresholds
+                if col_idx == 2:  # Market Cap
+                    widget_item.setForeground(
+                        QColor(76, 175, 80) if checks["mcap"] else QColor(244, 67, 54)
+                    )
+                elif col_idx == 3:  # D/E
+                    widget_item.setForeground(
+                        QColor(76, 175, 80) if checks["de"] else QColor(244, 67, 54)
+                    )
+                elif col_idx == 4:  # PEG
+                    widget_item.setForeground(
+                        QColor(76, 175, 80) if checks["peg"] else QColor(244, 67, 54)
+                    )
+                elif col_idx == 5:  # Beta
+                    widget_item.setForeground(
+                        QColor(76, 175, 80) if checks["beta"] else QColor(244, 67, 54)
+                    )
+                elif col_idx == 6:  # Avg Vol
+                    widget_item.setForeground(
+                        QColor(76, 175, 80) if checks["vol"] else QColor(244, 67, 54)
+                    )
+                elif col_idx == 7:  # Inst Own
+                    widget_item.setForeground(
+                        QColor(76, 175, 80) if checks["inst"] else QColor(244, 67, 54)
+                    )
+                elif col_idx == 8:  # ROE
+                    if s["roe"] is not None:
+                        widget_item.setForeground(
+                            QColor(76, 175, 80) if checks["roe"] else QColor(244, 67, 54)
+                        )
+                elif col_idx == 9:  # Status badge
+                    font = QFont()
+                    font.setBold(True)
+                    widget_item.setFont(font)
+                    widget_item.setForeground(
+                        QColor(76, 175, 80) if is_pass else QColor(244, 67, 54)
+                    )
 
-            if self.cb_mcap.isChecked():
-                items[2].setForeground(color_pass if checks["mcap"] else color_fail)
-            if self.cb_de.isChecked():
-                items[3].setForeground(color_pass if checks["de"] else color_fail)
-            if self.cb_peg.isChecked():
-                items[4].setForeground(color_pass if checks["peg"] else color_fail)
-            if self.cb_beta.isChecked():
-                items[5].setForeground(color_pass if checks["beta"] else color_fail)
-            if self.cb_vol.isChecked():
-                items[6].setForeground(color_pass if checks["vol"] else color_fail)
-            if self.cb_inst.isChecked():
-                items[7].setForeground(color_pass if checks["inst"] else color_fail)
-            if self.cb_roe.isChecked():
-                items[8].setForeground(color_pass if checks["roe"] else color_fail)
-
-            # Overall Status badge
-            items[9].setForeground(color_pass if is_pass else color_fail)
-            font = QFont()
-            font.setBold(True)
-            items[9].setFont(font)
-
-            for col_idx, widget_item in enumerate(items):
                 self.table.setItem(row_idx, col_idx, widget_item)
 
     def reset_filters(self) -> None:
@@ -524,16 +559,14 @@ class FundamentalScreenerTab(QWidget):
         self.apply_filters()
 
     def start_online_sync(self) -> None:
-        """Start background worker to sync fundamentals for all registered stocks."""
-        if self.sync_worker and self.sync_worker.isRunning():
-            QMessageBox.information(self, "Sync Active", "Fundamental sync is already in progress.")
+        """Launch background worker to sync fundamentals for all tracked stocks."""
+        if not self.all_securities:
+            QMessageBox.warning(
+                self, "No Securities", "No securities discovered in local database."
+            )
             return
 
         tickers = [s["ticker"] for s in self.all_securities]
-        if not tickers:
-            QMessageBox.warning(self, "No Securities", "No securities found in database.")
-            return
-
         self.btn_sync.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, len(tickers))
@@ -569,3 +602,99 @@ class FundamentalScreenerTab(QWidget):
             if ticker_item:
                 formatted_ticker = f"{ticker_item.text()} (STOCK)"
                 self.ticker_selected.emit(formatted_ticker)
+
+    def _get_export_dataframe(self) -> pd.DataFrame:
+        """Convert current filtered screener rows into a formatted DataFrame for export."""
+        records = []
+        for item in self.current_rows_data:
+            s = item["sec"]
+            is_pass = item["is_pass"]
+            records.append({
+                "Ticker": s["ticker"],
+                "Company Name": s["name"],
+                "Market Cap (Cr INR)": s["market_cap_cr"],
+                "Debt to Equity": s["debt_to_equity"],
+                "PEG Ratio": s["peg_ratio"],
+                "Beta (^NSEI)": s["beta_nsei"],
+                "252d Avg Volume": s["avg_volume_252"],
+                "Institutional Ownership (%)": (
+                    s["institutional_ownership"] * 100
+                    if s["institutional_ownership"] is not None
+                    else None
+                ),
+                "ROE (%)": s["roe"] * 100 if s["roe"] is not None else None,
+                "Status": "PASS" if is_pass else "FAIL",
+            })
+        return pd.DataFrame(records)
+
+    def export_to_csv(self) -> None:
+        """Export current filtered fundamental screener rows to a CSV file."""
+        if not self.current_rows_data:
+            QMessageBox.information(
+                self,
+                "No Data to Export",
+                "There are no stock records to export.",
+            )
+            return
+
+        df_export = self._get_export_dataframe()
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Fundamental Screener as CSV",
+            "fundamental_screener_results.csv",
+            "CSV Files (*.csv);;All Files (*)",
+        )
+
+        if not file_path:
+            return
+
+        try:
+            df_export.to_csv(file_path, index=False)
+            QMessageBox.information(
+                self,
+                "Export Successful",
+                f"Successfully exported {len(df_export)} stocks to:\n{file_path}",
+            )
+        except Exception as err:
+            QMessageBox.critical(
+                self,
+                "Export Failed",
+                f"Failed to export CSV file:\n{err}",
+            )
+
+    def export_to_excel(self) -> None:
+        """Export current filtered fundamental screener rows to an Excel workbook."""
+        if not self.current_rows_data:
+            QMessageBox.information(
+                self,
+                "No Data to Export",
+                "There are no stock records to export.",
+            )
+            return
+
+        df_export = self._get_export_dataframe()
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Fundamental Screener as Excel",
+            "fundamental_screener_results.xlsx",
+            "Excel Files (*.xlsx);;All Files (*)",
+        )
+
+        if not file_path:
+            return
+
+        try:
+            with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
+                df_export.to_excel(writer, sheet_name="Fundamental Screen", index=False)
+
+            QMessageBox.information(
+                self,
+                "Export Successful",
+                f"Successfully exported {len(df_export)} stocks to:\n{file_path}",
+            )
+        except Exception as err:
+            QMessageBox.critical(
+                self,
+                "Export Failed",
+                f"Failed to export Excel file:\n{err}",
+            )

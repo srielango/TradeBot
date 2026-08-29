@@ -94,22 +94,19 @@ class MovingAverageStochastic(BaseStrategy):
         df.loc[sell_condition, 'Signal'] = -1
 
         # --- 4. Stop Loss & Position Sizing ---
+        # 5-day swing low calculated from the previous 5 bars
+        swing_low = df['low'].shift(1).rolling(window=5, min_periods=1).min()
         df['StopLoss'] = None
         df['PositionSize'] = 0
 
         risk_amount = capital * risk_per_trade
 
-        for i in range(len(df)):
-            if df.loc[i, 'Signal'] == 1:
-                # Look back 5 days for recent swing low
-                lookback = df.iloc[max(0, i - 5):i]
-                if not lookback.empty:
-                    stop = lookback['low'].min()
-                    entry = df.loc[i + 1, 'open'] if i + 1 < len(df) else df.loc[i, 'close']
-                    risk_per_share = entry - stop
-                    if risk_per_share > 0:
-                        position_size = int(risk_amount / risk_per_share)
-                        df.loc[i, 'StopLoss'] = stop
-                        df.loc[i, 'PositionSize'] = position_size
+        # Next-day open price estimate for entry sizing
+        entry_est = df['open'].shift(-1).fillna(df['close'])
+        risk_per_share = entry_est - swing_low
+
+        buy_mask = (df['Signal'] == 1) & (risk_per_share > 0)
+        df.loc[buy_mask, 'StopLoss'] = swing_low[buy_mask]
+        df.loc[buy_mask, 'PositionSize'] = (risk_amount / risk_per_share[buy_mask]).astype(int)
 
         return df
