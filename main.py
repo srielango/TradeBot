@@ -11,6 +11,7 @@ from back_test_engine import BacktestEngine
 from fundamental_screener import FundamentalScreener
 from market_repository import MarketRepository
 from strategies.bullish_kicker import BullishKicker
+from strategies.bullish_outside_bar import BullishOutsideBar
 from strategies.moving_average_stochastic import MovingAverageStochastic
 from ui import TradingApp
 
@@ -43,6 +44,95 @@ def example_bullish_kicker() -> None:
 
     repo = MarketRepository()
     strategy = BullishKicker(target_profit_pct=0.09)
+
+    # 1. Single-Security Samples
+    sample_tickers = ["INFY.NS", "RELIANCE.NS", "TCS.NS", "ASIANPAINT.NS"]
+    print("\n[1] Single-Security Backtest Sample (INR 1,000,000 Capital, 1% Risk):")
+    sample_header = (
+        f"{'Ticker':<14} | {'Trades':<8} | {'Wins':<6} | {'Losses':<8} | "
+        f"{'Win Rate':<10} | {'Total PnL (INR)':<16}"
+    )
+    print(sample_header)
+    print("-" * len(sample_header))
+
+    engine = BacktestEngine(initial_capital=1_000_000.0)
+    for ticker in sample_tickers:
+        df = repo.get_data(ticker)
+        if df.empty:
+            continue
+        signals_df = strategy.generate_signals(df)
+        res = engine.run(signals_df, ticker=ticker)
+        m = res["Metrics"]
+        pnl_str = f"INR {m['TotalPnL']:>11,.2f}"
+        print(
+            f"{ticker:<14} | {m['TotalTrades']:<8} | {m['Wins']:<6} | {m['Losses']:<8} | "
+            f"{m['WinRatePct']:<9.1f}% | {pnl_str}"
+        )
+    print("-" * len(sample_header))
+
+    # 2. Multi-Stock Portfolio Backtest across all stocks
+    print("\n[2] Multi-Stock Portfolio Backtest (All Active Stocks, 10% Capital Allocation):")
+    stocks_data = repo.get_all_stocks_data()
+    print(f"Loaded price records for {len(stocks_data)} active stocks from database.")
+
+    signals_dict = {}
+    for ticker, df in stocks_data.items():
+        signals_dict[ticker] = strategy.generate_signals(df)
+
+    engine_portfolio = BacktestEngine(
+        initial_capital=1_000_000.0,
+        allocation_fraction=0.10,
+    )
+    portfolio_results = engine_portfolio.run_portfolio(signals_dict)
+
+    pm = portfolio_results["Metrics"]
+    trade_log = portfolio_results["TradeLog"]
+
+    print("\n[Portfolio Performance Metrics Summary]:")
+    print(f"  Total Trades   : {pm['TotalTrades']}")
+    print(f"  Winning Trades : {pm['Wins']}")
+    print(f"  Losing Trades  : {pm['Losses']}")
+    print(f"  Win Rate       : {pm['WinRatePct']:.1f} %")
+    print(f"  Total PnL      : INR {pm['TotalPnL']:+,.2f}")
+    print(f"  Final Capital  : INR {pm['FinalCapital']:,.2f}")
+
+    if not trade_log.empty:
+        print("\n[Exit Reasons Breakdown]:")
+        for reason, count in trade_log["ExitReason"].value_counts().items():
+            print(f"  - {reason:<22}: {count:>4} trades")
+
+        print("\n[Recent Trades Sample (Last 10)]:")
+        display_cols = [
+            "Security", "EntryDate", "ExitDate", "PositionSize",
+            "EntryPrice", "ExitPrice", "PnL", "ReturnPct", "Result", "ExitReason",
+        ]
+        sample_df = trade_log[display_cols].tail(10)
+        print(sample_df.to_string(index=False))
+
+
+def example_bullish_outside_bar() -> None:
+    """Showcase Bullish Outside Bar reversal strategy with 10% target and 1% risk sizing."""
+    print("=" * 80)
+    print("BULLISH OUTSIDE BAR (ENGULFING) REVERSAL STRATEGY SHOWCASE")
+    print("=" * 80)
+    print("Strategy Checklist Rules:")
+    print("  1. Spotting the Setup (Preferred: Weekly Charts):")
+    print("     - Prior downtrend of at least 6-10% over the lookback window.")
+    print("     - Bar 1 (t-1): Bearish candle (Close < Open).")
+    print("     - Bar 2 (t): Engulfs Bar 1 completely (High > High[1], Low < Low[1]).")
+    print("  2. Validating Strength:")
+    print("     - Reversal candle body >= 40% of its high-low range (decisive).")
+    print("     - Close near the high: (Close - Low) / Range >= 60%.")
+    print("     - Volume spike >= 20-bar volume SMA (adds conviction).")
+    print("  3. Stop Loss & Position Sizing:")
+    print("     - Stop Loss: Low of the reversal candle (Bar 2 low).")
+    print("     - Position Sizing: Risk 1% of total portfolio capital per trade.")
+    print("  4. Profit Target Exit:")
+    print("     - Exit upon achieving 10.0% profit target.")
+    print("-" * 80)
+
+    repo = MarketRepository()
+    strategy = BullishOutsideBar(target_profit_pct=0.10)
 
     # 1. Single-Security Samples
     sample_tickers = ["INFY.NS", "RELIANCE.NS", "TCS.NS", "ASIANPAINT.NS"]
@@ -241,6 +331,8 @@ def main() -> None:
     """Initialize and showcase the primary application functionality."""
     if "--kicker" in sys.argv or "--bullish-kicker" in sys.argv:
         example_bullish_kicker()
+    elif "--outside-bar" in sys.argv or "--bullish-outside-bar" in sys.argv:
+        example_bullish_outside_bar()
     elif "--backtest" in sys.argv or "--all-stocks" in sys.argv:
         example_all_stocks_backtest()
     elif "--cli" in sys.argv or "--screener" in sys.argv:
