@@ -26,7 +26,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from config import DB_PATH
+from config import DB_PATH, TARGET_INDICES
 from market_repository import MarketRepository
 from ui.backtest_tab import BacktestTab
 from ui.fundamental_screener_tab import FundamentalScreenerTab
@@ -166,6 +166,34 @@ class TradingApp(QMainWindow):
         self.ma_widget.setVisible(False)
         sidebar.addWidget(self.ma_widget)
 
+        # Beta checkbox
+        self.beta_check = QCheckBox('Beta')
+        self.beta_check.stateChanged.connect(self._on_beta_toggled)
+        sidebar.addWidget(self.beta_check)
+
+        # Beta parameter widget (hidden by default)
+        self.beta_widget = QWidget()
+        beta_layout = QVBoxLayout(self.beta_widget)
+        beta_layout.setContentsMargins(12, 0, 0, 0)
+
+        self.beta_period = QSpinBox()
+        self.beta_period.setRange(30, 756)
+        self.beta_period.setValue(252)
+        beta_layout.addWidget(QLabel('Rolling Window (days)'))
+        beta_layout.addWidget(self.beta_period)
+
+        self.beta_benchmark = QComboBox()
+        for ticker, name in TARGET_INDICES.items():
+            self.beta_benchmark.addItem(name, ticker)
+        beta_layout.addWidget(QLabel('Benchmark'))
+        beta_layout.addWidget(self.beta_benchmark)
+
+        self.beta_period.valueChanged.connect(self.refresh_chart)
+        self.beta_benchmark.currentIndexChanged.connect(self.refresh_chart)
+
+        self.beta_widget.setVisible(False)
+        sidebar.addWidget(self.beta_widget)
+
         sidebar.addStretch()
 
         # Interactive Chart View
@@ -211,6 +239,11 @@ class TradingApp(QMainWindow):
     def _on_ma_toggled(self) -> None:
         """Show/hide Moving Average parameter panel based on checkbox state."""
         self.ma_widget.setVisible(self.ma_check.isChecked())
+        self.refresh_chart()
+
+    def _on_beta_toggled(self) -> None:
+        """Show/hide Beta parameter panel based on checkbox state."""
+        self.beta_widget.setVisible(self.beta_check.isChecked())
         self.refresh_chart()
 
     # ── Ticker search/filter ─────────────────────────────────────────────────
@@ -271,8 +304,15 @@ class TradingApp(QMainWindow):
         self.backtest_tab.set_active_ticker(ticker_str)
         self.tabs.setCurrentWidget(self.backtest_tab)
 
-    def refresh_chart(self):
-        """Update and re-render Plotly chart with candlesticks, volume, and indicators."""
+    def refresh_chart(self):  # noqa: C901
+        """Update and re-render Plotly chart with candlesticks, volume, and indicators.
+
+        Subplot layout adapts dynamically:
+          - Row 1 : Price candlesticks (+ Moving Average overlay when active)
+          - Row 2 : Volume bars
+          - Row 3 : Stochastic Oscillator (when active) or Beta (when only Beta is active)
+          - Row 4 : Beta (only added when both Stochastic and Beta are active)
+        """
         item = self.ticker_list.currentItem()
         if item is None:
             return
@@ -297,14 +337,41 @@ class TradingApp(QMainWindow):
         else:
             df_display = df_full.copy()
 
+        # Determine which indicators are active
+        stoch_active = self.stoch_check.isChecked()
+        ma_active = self.ma_check.isChecked()
+        beta_active = self.beta_check.isChecked()
+
+        # When both Stochastic and Beta are active a 4th row is added so each
+        # indicator has its own dedicated panel; otherwise 3 rows suffice.
+        both_sub_active = stoch_active and beta_active
+        beta_row = 4 if both_sub_active else 3
+
+        if both_sub_active:
+            num_rows = 4
+            row_heights = [0.5, 0.15, 0.175, 0.175]
+            subplot_titles = ("Price", "Volume", "Stochastic", "Beta")
+        elif stoch_active:
+            num_rows = 3
+            row_heights = [0.6, 0.2, 0.2]
+            subplot_titles = ("Price", "Volume", "Stochastic")
+        elif beta_active:
+            num_rows = 3
+            row_heights = [0.6, 0.2, 0.2]
+            subplot_titles = ("Price", "Volume", "Beta")
+        else:
+            num_rows = 3
+            row_heights = [0.6, 0.2, 0.2]
+            subplot_titles = ("Price", "Volume", "Indicators")
+
         # Build multi-panel subplot layout
         fig = make_subplots(
-            rows=3,
+            rows=num_rows,
             cols=1,
             shared_xaxes=True,
-            row_heights=[0.6, 0.2, 0.2],
+            row_heights=row_heights,
             vertical_spacing=0.05,
-            subplot_titles=("Price", "Volume", "Indicators"),
+            subplot_titles=subplot_titles,
         )
 
         # Subplot 1: Price Candlesticks
@@ -334,10 +401,7 @@ class TradingApp(QMainWindow):
             col=1,
         )
 
-        # Subplot 3: Technical Indicators (only render those whose checkbox is checked)
-        stoch_active = self.stoch_check.isChecked()
-        ma_active = self.ma_check.isChecked()
-
+        # Subplot 3 (row 3): Stochastic Oscillator
         if stoch_active:
             k_period = self.k_period.value()
             k_smooth = self.k_smooth.value()
@@ -380,6 +444,7 @@ class TradingApp(QMainWindow):
                 tickvals=[0, 20, 40, 60, 80, 100],
             )
 
+        # Subplot 1 overlay: Moving Average
         if ma_active:
             ma_period = self.ma_period.value()
             ma_type = self.ma_type.currentText()
@@ -402,6 +467,127 @@ class TradingApp(QMainWindow):
                 col=1,
             )
 
+        # Subplot 3 or 4: Rolling Beta
+        if beta_active:
+            beta_window = self.beta_period.value()
+            benchmark_ticker = self.beta_benchmark.currentData()
+            benchmark_display = f"{benchmark_ticker} (INDEX)"
+
+            df_bench = self.repo.get_data(benchmark_display)
+
+            if not df_bench.empty:
+                df_bench = df_bench.copy()
+                df_bench['date'] = pd.to_datetime(df_bench['date'])
+
+                # Compute daily percentage returns for stock and benchmark
+                df_full['stock_ret'] = df_full['close'].pct_change()
+                bench_ret = (
+                    df_bench.set_index('date')['close']
+                    .pct_change()
+                    .rename('bench_ret')
+                )
+
+                # Align stock and benchmark returns on common trading dates
+                combined = (
+                    df_full.set_index('date')[['stock_ret']]
+                    .join(bench_ret, how='inner')
+                    .dropna()
+                )
+
+                # Rolling beta = Cov(stock, benchmark) / Var(benchmark)
+                roll_cov = combined['stock_ret'].rolling(window=beta_window).cov(
+                    combined['bench_ret']
+                )
+                roll_var = combined['bench_ret'].rolling(window=beta_window).var()
+                combined['beta'] = roll_cov / roll_var
+
+                # Slice to display window
+                if horizon_months is not None:
+                    beta_cutoff = (
+                        combined.index.max() - pd.DateOffset(months=horizon_months)
+                    )
+                    combined_display = combined[combined.index >= beta_cutoff]
+                else:
+                    combined_display = combined
+
+                # Plot rolling beta line
+                fig.add_trace(
+                    go.Scatter(
+                        x=combined_display.index,
+                        y=combined_display['beta'],
+                        mode='lines',
+                        name=f'Beta ({beta_window}d)',
+                        line={'color': 'mediumpurple'},
+                    ),
+                    row=beta_row,
+                    col=1,
+                )
+
+                # Dashed reference line at beta = 1.0 (market-neutral)
+                fig.add_hline(
+                    y=1.0,
+                    line_dash='dash',
+                    line_color='gray',
+                    row=beta_row,
+                    col=1,
+                    annotation_text='\u03b2=1',
+                    annotation_position='right',
+                )
+
+                # Dashed reference line at beta = 1.2 (high-beta buy threshold)
+                fig.add_hline(
+                    y=1.2,
+                    line_dash='dash',
+                    line_color='orange',
+                    row=beta_row,
+                    col=1,
+                    annotation_text='\u03b2=1.2',
+                    annotation_position='right',
+                )
+
+                # Limit y-axis ticks to 5 decimal places; fix range 0.0–1.5
+                # to keep both reference lines (beta=1.0 and beta=1.2) in frame
+                fig.update_yaxes(
+                    title_text="Beta",
+                    row=beta_row,
+                    col=1,
+                    tickformat='.5f',
+                    range=[0.0, 1.5],
+                )
+
+                # Annotate with cached beta_nsei from fundamentals when available
+                fundamentals = self.repo.get_fundamentals(display_string)
+                if fundamentals and fundamentals.get('beta_nsei') is not None:
+                    cached_beta = round(float(fundamentals['beta_nsei']), 2)
+                    fig.add_annotation(
+                        text=f"Cached \u03b2 (NSEI): {cached_beta}",
+                        xref='paper',
+                        yref='paper',
+                        x=0.01,
+                        y=1.01,
+                        showarrow=False,
+                        font={'size': 11, 'color': 'lightgreen'},
+                        align='left',
+                    )
+            else:
+                print(
+                    f"Warning: No benchmark data found for {benchmark_display}. "
+                    "Beta indicator cannot be rendered."
+                )
+
+        # Add empty placeholder in row 3 when no indicator occupies it
+        if not stoch_active and not beta_active:
+            fig.add_trace(
+                go.Scatter(
+                    x=df_display['date'],
+                    y=[None] * len(df_display),
+                    showlegend=False,
+                    hoverinfo='skip',
+                ),
+                row=3,
+                col=1,
+            )
+
         # Visual layout configuration
         fig.update_layout(
             template='plotly_dark',
@@ -417,21 +603,8 @@ class TradingApp(QMainWindow):
         fig.update_yaxes(title_text="Price", row=1, col=1)
         fig.update_yaxes(title_text="Volume", row=2, col=1)
 
-        if not stoch_active:
-            # Keep the third subplot placeholder visible but empty
-            fig.add_trace(
-                go.Scatter(
-                    x=df_display['date'],
-                    y=[None] * len(df_display),
-                    showlegend=False,
-                    hoverinfo='skip',
-                ),
-                row=3,
-                col=1,
-            )
-
-        # Always show x-axis ticks at the bottom
-        fig.update_xaxes(title_text="Date", row=3, col=1)
+        # Always show x-axis label on the bottom-most subplot row
+        fig.update_xaxes(title_text="Date", row=num_rows, col=1)
 
         # Render HTML string into WebEngine view
         html = fig.to_html(include_plotlyjs='cdn')
