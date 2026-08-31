@@ -411,19 +411,24 @@ class FundamentalScreener:
                 "passed": False,
             }
 
-        # 3. PEG ratio > 2.0
+        # 3. PEG ratio >= 2.0 (indicates strong growth expectations).
+        # Stocks with no PEG data (e.g. cyclicals, financials) are given a pass
+        # because the absence of a PEG should not disqualify an otherwise strong stock.
         if m.peg_ratio is not None:
             pass_peg = m.peg_ratio >= c["min_peg"]
             details["peg_ratio"] = {
                 "value": m.peg_ratio,
                 "threshold": c["min_peg"],
                 "passed": pass_peg,
+                "note": "below_threshold" if not pass_peg else None,
             }
         else:
+            # Pass but flag as unavailable so analysts know to verify manually
             details["peg_ratio"] = {
                 "value": None,
                 "threshold": c["min_peg"],
-                "passed": False,
+                "passed": True,
+                "note": "data_unavailable",
             }
 
         # 4. Beta > 1.2 (Prefer calculated Beta vs Nifty 50, fallback to Yahoo beta)

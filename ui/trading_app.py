@@ -11,9 +11,11 @@ from plotly.subplots import make_subplots
 # like Pylint cannot inspect without dynamic loading.
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QMainWindow,
     QMessageBox,
@@ -39,6 +41,10 @@ class TradingApp(QMainWindow):
         self.setWindowTitle('Tradebot Management Studio')
         self.resize(1400, 900)
         self.repo = MarketRepository(DB_PATH)
+
+        # Store full ticker list so the search filter can operate on it
+        self._all_tickers: list[str] = []
+
         self.init_ui()
         self.check_database_health()
 
@@ -59,14 +65,27 @@ class TradingApp(QMainWindow):
         sidebar_container.setLayout(sidebar)
         chart_tab_layout.addWidget(sidebar_container)
 
-        # Asset Watchlist
-        sidebar.addWidget(QLabel("<b>Nifty 50 Stocks Asset List</b>"))
+        # ── Asset Watchlist ──────────────────────────────────────────────────
+
+        sidebar.addWidget(QLabel('<b>Asset List</b>'))
+
+        # Live search/filter input
+        self.ticker_search = QLineEdit()
+        self.ticker_search.setPlaceholderText('Search stock or index…')
+        self.ticker_search.textChanged.connect(self._filter_ticker_list)
+        sidebar.addWidget(self.ticker_search)
+
         self.ticker_list = QListWidget()
-        self.ticker_list.addItems(self.repo.get_tickers())
+        self._all_tickers = self.repo.get_tickers()
+        self.ticker_list.addItems(self._all_tickers)
         self.ticker_list.currentTextChanged.connect(self.refresh_chart)
         sidebar.addWidget(self.ticker_list)
 
-        # Chart Period Selector
+        # Select Nifty 50 as the default item
+        self._select_default_ticker('^NSEI')
+
+        # ── Chart Period Selector ────────────────────────────────────────────
+
         sidebar.addWidget(QLabel('<b>Chart Period</b>'))
         self.period_selector = QComboBox()
         self.period_selector.addItem('1 Month', 1)
@@ -80,23 +99,19 @@ class TradingApp(QMainWindow):
         self.period_selector.currentIndexChanged.connect(self.refresh_chart)
         sidebar.addWidget(self.period_selector)
 
-        # Active Indicator Multi-selection
-        sidebar.addWidget(QLabel('<b>Active Indicators</b>'))
-        self.indicator_list = QListWidget()
-        self.indicator_list.addItems([
-            'Stochastic Oscillator',
-            'Moving Average',
-        ])
-        self.indicator_list.setSelectionMode(
-            self.indicator_list.SelectionMode.MultiSelection
-        )
-        self.indicator_list.itemSelectionChanged.connect(self.refresh_chart)
-        sidebar.addWidget(self.indicator_list)
+        # ── Active Indicators (checkboxes) ───────────────────────────────────
 
-        # Stochastic Oscillator parameter inputs
+        sidebar.addWidget(QLabel('<b>Active Indicators</b>'))
+
+        # Stochastic Oscillator checkbox
+        self.stoch_check = QCheckBox('Stochastic Oscillator')
+        self.stoch_check.stateChanged.connect(self._on_stoch_toggled)
+        sidebar.addWidget(self.stoch_check)
+
+        # Stochastic parameter widget (hidden by default)
         self.stochastic_widget = QWidget()
         stochastic_layout = QVBoxLayout(self.stochastic_widget)
-        sidebar.addWidget(self.stochastic_widget)
+        stochastic_layout.setContentsMargins(12, 0, 0, 0)
 
         self.k_period = QSpinBox()
         self.k_period.setRange(2, 50)
@@ -120,10 +135,18 @@ class TradingApp(QMainWindow):
         self.k_smooth.valueChanged.connect(self.refresh_chart)
         self.d_smooth.valueChanged.connect(self.refresh_chart)
 
-        # Moving Average parameter inputs
+        self.stochastic_widget.setVisible(False)
+        sidebar.addWidget(self.stochastic_widget)
+
+        # Moving Average checkbox
+        self.ma_check = QCheckBox('Moving Average')
+        self.ma_check.stateChanged.connect(self._on_ma_toggled)
+        sidebar.addWidget(self.ma_check)
+
+        # Moving Average parameter widget (hidden by default)
         self.ma_widget = QWidget()
         ma_layout = QVBoxLayout(self.ma_widget)
-        sidebar.addWidget(self.ma_widget)
+        ma_layout.setContentsMargins(12, 0, 0, 0)
 
         self.ma_period = QSpinBox()
         self.ma_period.setRange(2, 200)
@@ -138,6 +161,9 @@ class TradingApp(QMainWindow):
 
         self.ma_period.valueChanged.connect(self.refresh_chart)
         self.ma_type.currentIndexChanged.connect(self.refresh_chart)
+
+        self.ma_widget.setVisible(False)
+        sidebar.addWidget(self.ma_widget)
 
         sidebar.addStretch()
 
@@ -168,6 +194,67 @@ class TradingApp(QMainWindow):
             'Execution Date', 'Ticker', 'Type', 'Entry Price', 'Net PnL (INR)',
         ])
         self.tabs.addTab(self.journal_tab, 'Execution Journal')
+
+    # ── Indicator toggle helpers ─────────────────────────────────────────────
+
+    def _on_stoch_toggled(self) -> None:
+        """Show/hide Stochastic Oscillator parameter panel based on checkbox state."""
+        self.stochastic_widget.setVisible(self.stoch_check.isChecked())
+        self.refresh_chart()
+
+    def _on_ma_toggled(self) -> None:
+        """Show/hide Moving Average parameter panel based on checkbox state."""
+        self.ma_widget.setVisible(self.ma_check.isChecked())
+        self.refresh_chart()
+
+    # ── Ticker search/filter ─────────────────────────────────────────────────
+
+    def _filter_ticker_list(self, text: str) -> None:
+        """Filter the visible ticker list items to those containing *text*.
+
+        Args:
+            text (str): The current search string typed by the user.
+        """
+        query = text.strip().lower()
+
+        # Preserve the currently selected ticker so selection is not lost
+        current_item = self.ticker_list.currentItem()
+        current_text = current_item.text() if current_item else ''
+
+        self.ticker_list.blockSignals(True)
+        self.ticker_list.clear()
+
+        # Build filtered list; show all items when query is empty
+        matches = [
+            t for t in self._all_tickers
+            if query in t.lower()
+        ]
+        self.ticker_list.addItems(matches)
+
+        # Re-apply previous selection if it is still visible
+        for i in range(self.ticker_list.count()):
+            if self.ticker_list.item(i).text() == current_text:
+                self.ticker_list.setCurrentRow(i)
+                break
+
+        self.ticker_list.blockSignals(False)
+
+    def _select_default_ticker(self, prefix: str) -> None:
+        """Select the first ticker whose text starts with *prefix*.
+
+        Args:
+            prefix (str): Ticker symbol prefix to match (e.g. '^NSEI').
+        """
+        for i in range(self.ticker_list.count()):
+            if self.ticker_list.item(i).text().startswith(prefix):
+                self.ticker_list.setCurrentRow(i)
+                return
+
+        # Fallback: select first item if prefix not found
+        if self.ticker_list.count() > 0:
+            self.ticker_list.setCurrentRow(0)
+
+    # ── Main chart rendering ─────────────────────────────────────────────────
 
     def on_screener_ticker_selected(self, ticker_str: str) -> None:
         """Handle ticker double-click from Fundamental Screener tab by switching to Backtest.
@@ -241,10 +328,11 @@ class TradingApp(QMainWindow):
             col=1,
         )
 
-        # Subplot 3: Technical Indicators
-        selected = [item.text() for item in self.indicator_list.selectedItems()]
+        # Subplot 3: Technical Indicators (only render those whose checkbox is checked)
+        stoch_active = self.stoch_check.isChecked()
+        ma_active = self.ma_check.isChecked()
 
-        if 'Stochastic Oscillator' in selected:
+        if stoch_active:
             k_period = self.k_period.value()
             k_smooth = self.k_smooth.value()
             d_smooth = self.d_smooth.value()
@@ -286,7 +374,7 @@ class TradingApp(QMainWindow):
                 tickvals=[0, 20, 40, 60, 80, 100],
             )
 
-        if 'Moving Average' in selected:
+        if ma_active:
             ma_period = self.ma_period.value()
             ma_type = self.ma_type.currentText()
 
@@ -323,7 +411,8 @@ class TradingApp(QMainWindow):
         fig.update_yaxes(title_text="Price", row=1, col=1)
         fig.update_yaxes(title_text="Volume", row=2, col=1)
 
-        if 'Stochastic Oscillator' not in selected:
+        if not stoch_active:
+            # Keep the third subplot placeholder visible but empty
             fig.add_trace(
                 go.Scatter(
                     x=df_display['date'],

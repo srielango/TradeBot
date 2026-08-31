@@ -1,6 +1,7 @@
 """Sectoral and benchmark index definitions for Indian markets (NSE)."""
 
 TARGET_INDICES = {
+    "^NSEI": "Nifty 50 Index",
     "^CNXIT": "Nifty IT Index",
     "^CNXAUTO": "Nifty Auto Index",
     "^CNXPHARMA": "Nifty Pharma Index",
