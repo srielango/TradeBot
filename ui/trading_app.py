@@ -77,12 +77,13 @@ class TradingApp(QMainWindow):
 
         self.ticker_list = QListWidget()
         self._all_tickers = self.repo.get_tickers()
+        # Block signals during population so addItems does not prematurely
+        # trigger refresh_chart before all sidebar widgets are constructed.
+        self.ticker_list.blockSignals(True)
         self.ticker_list.addItems(self._all_tickers)
+        self.ticker_list.blockSignals(False)
         self.ticker_list.currentTextChanged.connect(self.refresh_chart)
         sidebar.addWidget(self.ticker_list)
-
-        # Select Nifty 50 as the default item
-        self._select_default_ticker('^NSEI')
 
         # ── Chart Period Selector ────────────────────────────────────────────
 
@@ -171,6 +172,11 @@ class TradingApp(QMainWindow):
         self.plotly_view = QWebEngineView(self.chart_tab)
         chart_tab_layout.addWidget(self.plotly_view)
         self.tabs.addTab(self.chart_tab, 'Analysis Terminal')
+
+        # Select Nifty 50 as default *after* all widgets are fully constructed
+        # so that the initial refresh_chart call has access to period_selector
+        # and all other sidebar controls.
+        self._select_default_ticker('^NSEI')
 
         # Strategy Backtester Tab
         self.backtest_tab = BacktestTab(self.repo)
