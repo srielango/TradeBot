@@ -7,22 +7,23 @@ from datetime import datetime, timedelta, timezone
 import yfinance as yf
 
 from config import DB_PATH
+from historical_data_loader import aggregate_index_volumes
 
 
 def get_latest_stored_date(cursor: sqlite3.Cursor, security_id: int) -> str | None:
-    """Retrieve the latest recorded price date for a specific security.
+    """Retrieve the latest recorded price timestamp for a specific security.
 
     Args:
         cursor (sqlite3.Cursor): Active database cursor.
         security_id (int): Primary key ID of the security.
 
     Returns:
-        str | None: Date string in 'YYYY-MM-DD' format if found, otherwise None.
+        str | None: Date string in 'YYYY-MM-DD HH:MM:SS' format if found, otherwise None.
     """
     cursor.execute(
         """
         SELECT MAX(date)
-        FROM daily_prices
+        FROM hourly_prices
         WHERE security_id = ?
         """,
         (security_id,),
@@ -31,8 +32,8 @@ def get_latest_stored_date(cursor: sqlite3.Cursor, security_id: int) -> str | No
     return result[0] if result and result[0] else None
 
 
-def run_daily_sync():
-    """Synchronize latest end-of-day price bars for all registered securities."""
+def run_daily_sync() -> None:
+    """Synchronize latest hourly price bars for all registered securities."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -40,34 +41,31 @@ def run_daily_sync():
     securities_list = cursor.fetchall()
 
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    print(f"Starting daily sync batch for date: {today_str}")
+    print(f"Starting hourly data sync batch for date: {today_str}")
     print(f"Tracking {len(securities_list)} total securities.\n" + "=" * 50)
 
     for sec_id, ticker in securities_list:
         last_date_str = get_latest_stored_date(cursor, sec_id)
 
         if last_date_str:
-            last_date_obj = datetime.strptime(
-                last_date_str, "%Y-%m-%d"
+            # Extract date portion and download from that start date
+            last_date_date_str = last_date_str[:10]
+            start_date_obj = datetime.strptime(
+                last_date_date_str, "%Y-%m-%d"
             ).replace(tzinfo=timezone.utc)
-            start_date_obj = last_date_obj + timedelta(days=1)
         else:
             start_date_obj = datetime.now(timezone.utc) - timedelta(days=30)
 
         start_str = start_date_obj.strftime("%Y-%m-%d")
 
-        if start_str > today_str:
-            print(f"{ticker:<12} | Up-to-date (Last record: {last_date_str})")
-            continue
-
-        print(f"{ticker:<12} | Syncing missing window: {start_str} to {today_str}")
+        print(f"{ticker:<12} | Syncing missing hourly window from {start_str}")
 
         try:
             df = yf.download(
                 ticker,
                 start=start_str,
                 end=None,
-                interval="1d",
+                interval="1h",
                 progress=False,
                 auto_adjust=True,
                 multi_level_index=False,
@@ -79,16 +77,17 @@ def run_daily_sync():
                 continue
 
             df = df.reset_index()
-            df.columns = [col.lower() for col in df.columns]
+            df.columns = [str(col).lower() for col in df.columns]
 
             records_to_insert = []
             for _, row in df.iterrows():
-                date_val = row["date"]
-                date_str = (
-                    date_val[:10]
-                    if isinstance(date_val, str)
-                    else date_val.strftime("%Y-%m-%d")
-                )
+                date_val = row.get("datetime", row.get("date"))
+                if isinstance(date_val, str):
+                    date_str = date_val[:19]
+                elif hasattr(date_val, "strftime"):
+                    date_str = date_val.strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    date_str = str(date_val)
 
                 if last_date_str and date_str <= last_date_str:
                     continue
@@ -108,7 +107,7 @@ def run_daily_sync():
             if records_to_insert:
                 cursor.executemany(
                     """
-                    INSERT OR IGNORE INTO daily_prices (
+                    INSERT OR IGNORE INTO hourly_prices (
                         security_id, date, open, high, low, close, volume
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -116,7 +115,7 @@ def run_daily_sync():
                     records_to_insert,
                 )
                 conn.commit()
-                print(f"{ticker:<12} | Added {len(records_to_insert)} new daily bars.")
+                print(f"{ticker:<12} | Added {len(records_to_insert)} new hourly bars.")
             else:
                 print(f"{ticker:<12} | Data up to date inside database.")
 
@@ -126,6 +125,8 @@ def run_daily_sync():
             print(f"Error processing {ticker}: {err}")
             conn.rollback()
 
+    # Aggregate constituent volume for index securities
+    aggregate_index_volumes(conn)
     conn.close()
 
 

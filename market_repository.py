@@ -43,13 +43,13 @@ class MarketRepository:
             return []
 
     def get_data(self, display_string: str) -> pd.DataFrame:
-        """Fetch historical daily price records for a selected ticker.
+        """Fetch historical hourly price records for a selected ticker.
 
         Args:
             display_string (str): Formatted ticker string from UI, e.g. 'RELIANCE.NS (STOCK)'.
 
         Returns:
-            pd.DataFrame: DataFrame containing daily prices (date, open, high, low, close, volume).
+            pd.DataFrame: DataFrame containing prices (date, open, high, low, close, volume).
         """
         if not display_string:
             return pd.DataFrame()
@@ -58,7 +58,7 @@ class MarketRepository:
 
         query = """
             SELECT p.date, p.open, p.high, p.low, p.close, p.volume
-            FROM daily_prices p
+            FROM hourly_prices p
             JOIN securities s ON p.security_id = s.id
             WHERE s.ticker = ?
             ORDER BY p.date ASC
@@ -77,7 +77,7 @@ class MarketRepository:
             return df
 
         except sqlite3.Error as err:
-            print(f"Database error while loading daily prices: {err}")
+            print(f"Database error while loading hourly prices: {err}")
             return pd.DataFrame()
 
     def get_fundamentals(self, display_string: str) -> dict | None:
@@ -134,14 +134,14 @@ class MarketRepository:
             return []
 
     def get_all_stocks_data(self) -> dict[str, pd.DataFrame]:
-        """Fetch historical daily price records for all active stocks in a single bulk query.
+        """Fetch historical hourly price records for all active stocks in a single bulk query.
 
         Returns:
             dict[str, pd.DataFrame]: Dictionary mapping ticker symbol to OHLCV DataFrame.
         """
         query = """
             SELECT s.ticker, p.date, p.open, p.high, p.low, p.close, p.volume
-            FROM daily_prices p
+            FROM hourly_prices p
             JOIN securities s ON p.security_id = s.id
             WHERE s.asset_type = 'STOCK'
             ORDER BY s.ticker ASC, p.date ASC

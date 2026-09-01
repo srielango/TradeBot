@@ -103,7 +103,7 @@ class FundamentalScreener:
         """
         query = """
             SELECT p.date, p.close
-            FROM daily_prices p
+            FROM hourly_prices p
             JOIN securities s ON p.security_id = s.id
             WHERE s.ticker = '^NSEI'
             ORDER BY p.date DESC
@@ -255,7 +255,7 @@ class FundamentalScreener:
         if df is None or df.empty:
             query = """
                 SELECT p.date, p.close, p.volume
-                FROM daily_prices p
+                FROM hourly_prices p
                 JOIN securities s ON p.security_id = s.id
                 WHERE s.ticker = ?
                 ORDER BY p.date ASC
