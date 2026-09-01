@@ -606,6 +606,14 @@ class TradingApp(QMainWindow):
         # Always show x-axis label on the bottom-most subplot row
         fig.update_xaxes(title_text="Date", row=num_rows, col=1)
 
+        # Hide weekends and overnight non-trading hours to avoid gaps on intraday hourly charts
+        fig.update_xaxes(
+            rangebreaks=[
+                {'bounds': ['sat', 'mon']},  # Hide weekends
+                {'bounds': [15.5, 9.25], 'pattern': 'hour'},  # Hide overnight hours (3:30PM-9:15AM)
+            ]
+        )
+
         # Render HTML string into WebEngine view
         html = fig.to_html(include_plotlyjs='cdn')
         self.plotly_view.setHtml(html)
