@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QApplication
 from back_test_engine import BacktestEngine
 from fundamental_screener import FundamentalScreener
 from market_repository import MarketRepository
+from rsi_indicator import analyze_rsi
 from strategies.bullish_kicker import BullishKicker
 from strategies.bullish_outside_bar import BullishOutsideBar
 from strategies.moving_average_stochastic import MovingAverageStochastic
@@ -327,6 +328,59 @@ def example_fundamental_screener() -> None:
         print("-" * len(btest_header))
 
 
+def example_rsi_indicator() -> None:
+    """Showcase RSI (Relative Strength Index) technical indicator calculation and analysis."""
+    print("=" * 80)
+    print("RELATIVE STRENGTH INDEX (RSI) INDICATOR SHOWCASE")
+    print("=" * 80)
+    print("Indicator Overview:")
+    print("  - Formula: RSI = 100 - (100 / (1 + RS)), where RS = Avg Gain / Avg Loss")
+    print("  - Smoothing: Wilder's Exponential Smoothing (Lookback: 14 periods)")
+    print("  - Overbought Threshold: RSI >= 70 (Potential bearish reversal / exhaustion)")
+    print("  - Oversold Threshold: RSI <= 30 (Potential bullish rebound / accumulation)")
+    print("-" * 80)
+
+    repo = MarketRepository()
+    sample_tickers = [
+        "INFY.NS", "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "^NSEI",
+    ]
+
+    print("\n[1] Sample Securities Current RSI (14-Period, 70/30 Thresholds):")
+    header = (
+        f"{'Ticker':<14} | {'Latest Price':<14} | {'RSI (14)':<10} | "
+        f"{'Signal Status':<16} | {'Condition'}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for ticker in sample_tickers:
+        display_ticker = f"{ticker} (INDEX)" if ticker.startswith("^") else f"{ticker} (STOCK)"
+        df = repo.get_data(display_ticker)
+        if df.empty:
+            continue
+
+        res = analyze_rsi(df, period=14, overbought=70, oversold=30)
+        latest_price = df['close'].iloc[-1]
+        rsi_val = res['current_rsi']
+        status = res['status']
+
+        rsi_str = f"{rsi_val:.2f}" if rsi_val is not None else "N/A"
+        price_str = f"INR {latest_price:,.2f}"
+
+        if status == "Overbought":
+            condition = "Caution: Overextended Upwards"
+        elif status == "Oversold":
+            condition = "Opportunity: Dip Reversal Watch"
+        else:
+            condition = "Neutral Momentum Zone"
+
+        print(
+            f"{ticker:<14} | {price_str:<14} | {rsi_str:<10} | "
+            f"{status:<16} | {condition}"
+        )
+    print("-" * len(header))
+
+
 def main() -> None:
     """Initialize and showcase the primary application functionality."""
     if "--kicker" in sys.argv or "--bullish-kicker" in sys.argv:
@@ -337,6 +391,8 @@ def main() -> None:
         example_all_stocks_backtest()
     elif "--cli" in sys.argv or "--screener" in sys.argv:
         example_fundamental_screener()
+    elif "--rsi" in sys.argv or "--rsi-indicator" in sys.argv:
+        example_rsi_indicator()
     else:
         example_trading_dashboard()
 

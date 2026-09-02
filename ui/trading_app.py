@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 
 from config import DB_PATH, TARGET_INDICES
 from market_repository import MarketRepository
+from rsi_indicator import calculate_rsi
 from ui.backtest_tab import BacktestTab
 from ui.fundamental_screener_tab import FundamentalScreenerTab
 
@@ -166,6 +167,41 @@ class TradingApp(QMainWindow):
         self.ma_widget.setVisible(False)
         sidebar.addWidget(self.ma_widget)
 
+        # Relative Strength Index (RSI) checkbox
+        self.rsi_check = QCheckBox('RSI')
+        self.rsi_check.stateChanged.connect(self._on_rsi_toggled)
+        sidebar.addWidget(self.rsi_check)
+
+        # RSI parameter widget (hidden by default)
+        self.rsi_widget = QWidget()
+        rsi_layout = QVBoxLayout(self.rsi_widget)
+        rsi_layout.setContentsMargins(12, 0, 0, 0)
+
+        self.rsi_period = QSpinBox()
+        self.rsi_period.setRange(2, 100)
+        self.rsi_period.setValue(14)
+        rsi_layout.addWidget(QLabel('RSI Period'))
+        rsi_layout.addWidget(self.rsi_period)
+
+        self.rsi_overbought = QSpinBox()
+        self.rsi_overbought.setRange(50, 95)
+        self.rsi_overbought.setValue(70)
+        rsi_layout.addWidget(QLabel('Overbought Level'))
+        rsi_layout.addWidget(self.rsi_overbought)
+
+        self.rsi_oversold = QSpinBox()
+        self.rsi_oversold.setRange(5, 50)
+        self.rsi_oversold.setValue(30)
+        rsi_layout.addWidget(QLabel('Oversold Level'))
+        rsi_layout.addWidget(self.rsi_oversold)
+
+        self.rsi_period.valueChanged.connect(self.refresh_chart)
+        self.rsi_overbought.valueChanged.connect(self.refresh_chart)
+        self.rsi_oversold.valueChanged.connect(self.refresh_chart)
+
+        self.rsi_widget.setVisible(False)
+        sidebar.addWidget(self.rsi_widget)
+
         # Beta checkbox
         self.beta_check = QCheckBox('Beta')
         self.beta_check.stateChanged.connect(self._on_beta_toggled)
@@ -239,6 +275,11 @@ class TradingApp(QMainWindow):
     def _on_ma_toggled(self) -> None:
         """Show/hide Moving Average parameter panel based on checkbox state."""
         self.ma_widget.setVisible(self.ma_check.isChecked())
+        self.refresh_chart()
+
+    def _on_rsi_toggled(self) -> None:
+        """Show/hide RSI parameter panel based on checkbox state."""
+        self.rsi_widget.setVisible(self.rsi_check.isChecked())
         self.refresh_chart()
 
     def _on_beta_toggled(self) -> None:
@@ -340,29 +381,42 @@ class TradingApp(QMainWindow):
         # Determine which indicators are active
         stoch_active = self.stoch_check.isChecked()
         ma_active = self.ma_check.isChecked()
+        rsi_active = self.rsi_check.isChecked()
         beta_active = self.beta_check.isChecked()
 
-        # When both Stochastic and Beta are active a 4th row is added so each
-        # indicator has its own dedicated panel; otherwise 3 rows suffice.
-        both_sub_active = stoch_active and beta_active
-        beta_row = 4 if both_sub_active else 3
+        # Identify active subplots (excluding row 1 and row 2 which are Price and Volume)
+        active_subplots: list[str] = []
+        if stoch_active:
+            active_subplots.append('Stochastic')
+        if rsi_active:
+            active_subplots.append('RSI')
+        if beta_active:
+            active_subplots.append('Beta')
 
-        if both_sub_active:
+        # Determine row layout and heights dynamically
+        num_sub = len(active_subplots)
+        if num_sub == 0:
+            num_rows = 3
+            row_heights = [0.6, 0.2, 0.2]
+            subplot_titles = ('Price', 'Volume', 'Indicators')
+        elif num_sub == 1:
+            num_rows = 3
+            row_heights = [0.6, 0.2, 0.2]
+            subplot_titles = ('Price', 'Volume', active_subplots[0])
+        elif num_sub == 2:
             num_rows = 4
             row_heights = [0.5, 0.15, 0.175, 0.175]
-            subplot_titles = ("Price", "Volume", "Stochastic", "Beta")
-        elif stoch_active:
-            num_rows = 3
-            row_heights = [0.6, 0.2, 0.2]
-            subplot_titles = ("Price", "Volume", "Stochastic")
-        elif beta_active:
-            num_rows = 3
-            row_heights = [0.6, 0.2, 0.2]
-            subplot_titles = ("Price", "Volume", "Beta")
-        else:
-            num_rows = 3
-            row_heights = [0.6, 0.2, 0.2]
-            subplot_titles = ("Price", "Volume", "Indicators")
+            subplot_titles = ('Price', 'Volume', active_subplots[0], active_subplots[1])
+        else:  # 3 sub-indicators
+            num_rows = 5
+            row_heights = [0.46, 0.12, 0.14, 0.14, 0.14]
+            subplot_titles = (
+                'Price', 'Volume', active_subplots[0], active_subplots[1], active_subplots[2],
+            )
+
+        def get_sub_row(name: str) -> int:
+            """Return 1-indexed subplot row number for the given active indicator."""
+            return 3 + active_subplots.index(name)
 
         # Build multi-panel subplot layout
         fig = make_subplots(
@@ -401,8 +455,9 @@ class TradingApp(QMainWindow):
             col=1,
         )
 
-        # Subplot 3 (row 3): Stochastic Oscillator
+        # Subplot: Stochastic Oscillator
         if stoch_active:
+            stoch_row = get_sub_row('Stochastic')
             k_period = self.k_period.value()
             k_smooth = self.k_smooth.value()
             d_smooth = self.d_smooth.value()
@@ -422,7 +477,7 @@ class TradingApp(QMainWindow):
                     name='%K',
                     line={'color': 'orange'},
                 ),
-                row=3,
+                row=stoch_row,
                 col=1,
             )
             fig.add_trace(
@@ -433,13 +488,13 @@ class TradingApp(QMainWindow):
                     name='%D',
                     line={'color': 'blue'},
                 ),
-                row=3,
+                row=stoch_row,
                 col=1,
             )
 
             fig.update_yaxes(
                 title_text="Stochastic",
-                row=3,
+                row=stoch_row,
                 col=1,
                 tickvals=[0, 20, 40, 60, 80, 100],
             )
@@ -467,8 +522,70 @@ class TradingApp(QMainWindow):
                 col=1,
             )
 
-        # Subplot 3 or 4: Rolling Beta
+        # Subplot: Relative Strength Index (RSI)
+        if rsi_active:
+            rsi_row = get_sub_row('RSI')
+            rsi_period = self.rsi_period.value()
+            ob_level = self.rsi_overbought.value()
+            os_level = self.rsi_oversold.value()
+
+            df_full['RSI'] = calculate_rsi(df_full['close'], period=rsi_period)
+
+            # Plot RSI line
+            fig.add_trace(
+                go.Scatter(
+                    x=df_display['date'],
+                    y=df_full.loc[df_display.index, 'RSI'],
+                    mode='lines',
+                    name=f'RSI ({rsi_period})',
+                    line={'color': '#00E5FF', 'width': 1.5},
+                ),
+                row=rsi_row,
+                col=1,
+            )
+
+            # Overbought reference line
+            fig.add_hline(
+                y=ob_level,
+                line_dash='dash',
+                line_color='#FF5252',
+                row=rsi_row,
+                col=1,
+                annotation_text=f'OB ({ob_level})',
+                annotation_position='right',
+            )
+
+            # Oversold reference line
+            fig.add_hline(
+                y=os_level,
+                line_dash='dash',
+                line_color='#69F0AE',
+                row=rsi_row,
+                col=1,
+                annotation_text=f'OS ({os_level})',
+                annotation_position='right',
+            )
+
+            # Midline reference line at 50
+            fig.add_hline(
+                y=50,
+                line_dash='dot',
+                line_color='gray',
+                row=rsi_row,
+                col=1,
+            )
+
+            fig.update_yaxes(
+                title_text="RSI",
+                row=rsi_row,
+                col=1,
+                range=[0, 100],
+                tickvals=[0, os_level, 50, ob_level, 100],
+            )
+
+        # Subplot: Rolling Beta
         if beta_active:
+            beta_row = get_sub_row('Beta')
             beta_window = self.beta_period.value()
             benchmark_ticker = self.beta_benchmark.currentData()
             benchmark_display = f"{benchmark_ticker} (INDEX)"
@@ -575,8 +692,8 @@ class TradingApp(QMainWindow):
                     "Beta indicator cannot be rendered."
                 )
 
-        # Add empty placeholder in row 3 when no indicator occupies it
-        if not stoch_active and not beta_active:
+        # Add empty placeholder in row 3 when no sub-indicator occupies it
+        if not active_subplots:
             fig.add_trace(
                 go.Scatter(
                     x=df_display['date'],
