@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
 
 from config import DB_PATH, TARGET_INDICES
 from market_repository import MarketRepository
+from adx_indicator import calculate_adx
 from rsi_indicator import calculate_rsi
 from ui.backtest_tab import BacktestTab
 from ui.fundamental_screener_tab import FundamentalScreenerTab
@@ -202,6 +203,39 @@ class TradingApp(QMainWindow):
         self.rsi_widget.setVisible(False)
         sidebar.addWidget(self.rsi_widget)
 
+        # Average Directional Index (ADX) checkbox
+        self.adx_check = QCheckBox('ADX')
+        self.adx_check.stateChanged.connect(self._on_adx_toggled)
+        sidebar.addWidget(self.adx_check)
+
+        # ADX parameter widget (hidden by default)
+        self.adx_widget = QWidget()
+        adx_layout = QVBoxLayout(self.adx_widget)
+        adx_layout.setContentsMargins(12, 0, 0, 0)
+
+        self.adx_period = QSpinBox()
+        self.adx_period.setRange(2, 100)
+        self.adx_period.setValue(14)
+        adx_layout.addWidget(QLabel('ADX Period'))
+        adx_layout.addWidget(self.adx_period)
+
+        self.adx_threshold = QSpinBox()
+        self.adx_threshold.setRange(10, 50)
+        self.adx_threshold.setValue(25)
+        adx_layout.addWidget(QLabel('Trend Threshold'))
+        adx_layout.addWidget(self.adx_threshold)
+
+        self.adx_show_di = QCheckBox('Show +DI / -DI')
+        self.adx_show_di.setChecked(True)
+        adx_layout.addWidget(self.adx_show_di)
+
+        self.adx_period.valueChanged.connect(self.refresh_chart)
+        self.adx_threshold.valueChanged.connect(self.refresh_chart)
+        self.adx_show_di.stateChanged.connect(self.refresh_chart)
+
+        self.adx_widget.setVisible(False)
+        sidebar.addWidget(self.adx_widget)
+
         # Beta checkbox
         self.beta_check = QCheckBox('Beta')
         self.beta_check.stateChanged.connect(self._on_beta_toggled)
@@ -280,6 +314,11 @@ class TradingApp(QMainWindow):
     def _on_rsi_toggled(self) -> None:
         """Show/hide RSI parameter panel based on checkbox state."""
         self.rsi_widget.setVisible(self.rsi_check.isChecked())
+        self.refresh_chart()
+
+    def _on_adx_toggled(self) -> None:
+        """Show/hide ADX parameter panel based on checkbox state."""
+        self.adx_widget.setVisible(self.adx_check.isChecked())
         self.refresh_chart()
 
     def _on_beta_toggled(self) -> None:
@@ -382,6 +421,7 @@ class TradingApp(QMainWindow):
         stoch_active = self.stoch_check.isChecked()
         ma_active = self.ma_check.isChecked()
         rsi_active = self.rsi_check.isChecked()
+        adx_active = self.adx_check.isChecked()
         beta_active = self.beta_check.isChecked()
 
         # Identify active subplots (excluding row 1 and row 2 which are Price and Volume)
@@ -390,6 +430,8 @@ class TradingApp(QMainWindow):
             active_subplots.append('Stochastic')
         if rsi_active:
             active_subplots.append('RSI')
+        if adx_active:
+            active_subplots.append('ADX')
         if beta_active:
             active_subplots.append('Beta')
 
@@ -407,12 +449,15 @@ class TradingApp(QMainWindow):
             num_rows = 4
             row_heights = [0.5, 0.15, 0.175, 0.175]
             subplot_titles = ('Price', 'Volume', active_subplots[0], active_subplots[1])
-        else:  # 3 sub-indicators
+        elif num_sub == 3:
             num_rows = 5
-            row_heights = [0.46, 0.12, 0.14, 0.14, 0.14]
-            subplot_titles = (
-                'Price', 'Volume', active_subplots[0], active_subplots[1], active_subplots[2],
-            )
+            row_heights = [0.44, 0.11, 0.15, 0.15, 0.15]
+            subplot_titles = tuple(['Price', 'Volume'] + active_subplots)
+        else:  # 4 or more sub-indicators
+            num_rows = 2 + num_sub
+            sub_h = 0.50 / num_sub
+            row_heights = [0.40, 0.10] + [sub_h] * num_sub
+            subplot_titles = tuple(['Price', 'Volume'] + active_subplots)
 
         def get_sub_row(name: str) -> int:
             """Return 1-indexed subplot row number for the given active indicator."""
@@ -575,12 +620,91 @@ class TradingApp(QMainWindow):
                 col=1,
             )
 
+            rsi_ticks = sorted(list({0, 20, os_level, 40, 50, 60, ob_level, 80, 100}))
             fig.update_yaxes(
                 title_text="RSI",
                 row=rsi_row,
                 col=1,
                 range=[0, 100],
-                tickvals=[0, os_level, 50, ob_level, 100],
+                tickvals=rsi_ticks,
+            )
+
+        # Subplot: Average Directional Index (ADX)
+        if adx_active:
+            adx_row = get_sub_row('ADX')
+            adx_period = self.adx_period.value()
+            trend_threshold = self.adx_threshold.value()
+            show_di = self.adx_show_di.isChecked()
+
+            adx_data = calculate_adx(df_full, period=adx_period)
+
+            # Plot ADX line
+            fig.add_trace(
+                go.Scatter(
+                    x=df_display['date'],
+                    y=adx_data.loc[df_display.index, 'ADX'],
+                    mode='lines',
+                    name=f'ADX ({adx_period})',
+                    line={'color': '#FFD700', 'width': 2.0},
+                ),
+                row=adx_row,
+                col=1,
+            )
+
+            # Plot +DI and -DI lines when enabled
+            if show_di:
+                fig.add_trace(
+                    go.Scatter(
+                        x=df_display['date'],
+                        y=adx_data.loc[df_display.index, '+DI'],
+                        mode='lines',
+                        name=f'+DI ({adx_period})',
+                        line={'color': '#00E676', 'width': 1.2},
+                    ),
+                    row=adx_row,
+                    col=1,
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=df_display['date'],
+                        y=adx_data.loc[df_display.index, '-DI'],
+                        mode='lines',
+                        name=f'-DI ({adx_period})',
+                        line={'color': '#FF1744', 'width': 1.2},
+                    ),
+                    row=adx_row,
+                    col=1,
+                )
+
+            # Trend threshold reference line (e.g. 25)
+            fig.add_hline(
+                y=trend_threshold,
+                line_dash='dash',
+                line_color='#FFA726',
+                row=adx_row,
+                col=1,
+                annotation_text=f'Trend ({trend_threshold})',
+                annotation_position='right',
+            )
+
+            # Weak trend reference line at 20
+            fig.add_hline(
+                y=20,
+                line_dash='dot',
+                line_color='gray',
+                row=adx_row,
+                col=1,
+                annotation_text='Weak (20)',
+                annotation_position='right',
+            )
+
+            adx_ticks = sorted(list({0, 20, trend_threshold, 40, 60, 80}))
+            fig.update_yaxes(
+                title_text="ADX",
+                row=adx_row,
+                col=1,
+                range=[0, 80],
+                tickvals=adx_ticks,
             )
 
         # Subplot: Rolling Beta

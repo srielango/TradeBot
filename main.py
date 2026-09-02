@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QApplication
 from back_test_engine import BacktestEngine
 from fundamental_screener import FundamentalScreener
 from market_repository import MarketRepository
+from adx_indicator import analyze_adx
 from rsi_indicator import analyze_rsi
 from strategies.bullish_kicker import BullishKicker
 from strategies.bullish_outside_bar import BullishOutsideBar
@@ -381,6 +382,54 @@ def example_rsi_indicator() -> None:
     print("-" * len(header))
 
 
+def example_adx_indicator() -> None:
+    """Showcase ADX (Average Directional Index) trend strength & directional movement."""
+    print("=" * 80)
+    print("AVERAGE DIRECTIONAL INDEX (ADX) & DIRECTIONAL MOVEMENT SYSTEM")
+    print("=" * 80)
+    print("Indicator Overview:")
+    print("  - ADX Trend Strength: ADX >= 25 (Strong Trend), ADX < 20 (Weak / Ranging)")
+    print("  - Directional Bias: +DI > -DI (Bullish Dominance), -DI > +DI (Bearish Dominance)")
+    print("  - Smoothing: Wilder's Exponential Smoothing (Lookback: 14 periods)")
+    print("-" * 80)
+
+    repo = MarketRepository()
+    sample_tickers = [
+        "INFY.NS", "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "^NSEI",
+    ]
+
+    print("\n[1] Sample Securities Current ADX, +DI, and -DI (14-Period, Trend Threshold: 25):")
+    header = (
+        f"{'Ticker':<14} | {'ADX (14)':<10} | {'+DI':<8} | {'-DI':<8} | "
+        f"{'Trend Strength':<18} | {'Directional Bias'}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for ticker in sample_tickers:
+        display_ticker = f"{ticker} (INDEX)" if ticker.startswith("^") else f"{ticker} (STOCK)"
+        df = repo.get_data(display_ticker)
+        if df.empty:
+            continue
+
+        res = analyze_adx(df, period=14, threshold=25)
+        adx_val = res['current_adx']
+        pos_di = res['current_pos_di']
+        neg_di = res['current_neg_di']
+        strength = res['trend_strength']
+        bias = res['directional_bias']
+
+        adx_str = f"{adx_val:.2f}" if adx_val is not None else "N/A"
+        pos_str = f"{pos_di:.2f}" if pos_di is not None else "N/A"
+        neg_str = f"{neg_di:.2f}" if neg_di is not None else "N/A"
+
+        print(
+            f"{ticker:<14} | {adx_str:<10} | {pos_str:<8} | {neg_str:<8} | "
+            f"{strength:<18} | {bias}"
+        )
+    print("-" * len(header))
+
+
 def main() -> None:
     """Initialize and showcase the primary application functionality."""
     if "--kicker" in sys.argv or "--bullish-kicker" in sys.argv:
@@ -393,6 +442,8 @@ def main() -> None:
         example_fundamental_screener()
     elif "--rsi" in sys.argv or "--rsi-indicator" in sys.argv:
         example_rsi_indicator()
+    elif "--adx" in sys.argv or "--adx-indicator" in sys.argv:
+        example_adx_indicator()
     else:
         example_trading_dashboard()
 
