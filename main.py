@@ -7,10 +7,11 @@ import sys
 # like Pylint cannot inspect without dynamic loading.
 from PyQt6.QtWidgets import QApplication
 
+from adx_indicator import analyze_adx
 from back_test_engine import BacktestEngine
 from fundamental_screener import FundamentalScreener
 from market_repository import MarketRepository
-from adx_indicator import analyze_adx
+from morning_scanner import MorningScanner
 from rsi_indicator import analyze_rsi
 from strategies.bullish_kicker import BullishKicker
 from strategies.bullish_outside_bar import BullishOutsideBar
@@ -430,6 +431,84 @@ def example_adx_indicator() -> None:
     print("-" * len(header))
 
 
+def example_morning_scanner(
+    lookback_months: int = 6,
+    trigger_scope: str = "last_bar",
+) -> None:
+    """Showcase TradeBot Morning Scanner for pre-market buy signal detection on previous close.
+
+    Args:
+        lookback_months (int): Historical window (3 to 6 months) for indicator warm-up.
+        trigger_scope (str): 'last_bar' (strict close) or 'previous_day' (full day session).
+    """
+    scope_label = "Previous Close Bar (Strict 15:15)" if trigger_scope == "last_bar" else "Previous Trading Day (Full Session)"
+    print("=" * 100)
+    print("TRADEBOT MORNING SCANNER - PREVIOUS CLOSE BUY SIGNALS")
+    print("=" * 100)
+    print("Scanner Architecture & Rules:")
+    print("  1. Universe: All 50 active equity stocks from database (excluding market indices).")
+    print(f"  2. Indicator Warm-up: Past {lookback_months} months of historical data used.")
+    print(f"  3. Trigger Scope: {scope_label}.")
+    print("  4. Trigger Logic: Strategy shown against stock ONLY if BUY was triggered in the scope window.")
+    print("  5. Confluence: If multiple strategies indicate BUY, all are listed next to that stock.")
+    print("-" * 100)
+
+    scanner = MorningScanner()
+    results = scanner.scan(
+        lookback_months=lookback_months,
+        trigger_scope=trigger_scope,
+    )
+
+    if not results:
+        print("No stock price records found to scan.")
+        return
+
+    # Aggregate KPI summary metrics
+    total_scanned = len(results)
+    buy_stocks = [r for r in results if r["confluence_count"] >= 1]
+    confluence_stocks = [r for r in results if r["confluence_count"] >= 2]
+    prev_close_date = results[0]["prev_close_date"] if results else "N/A"
+
+    print(f"\n[1] Scan Summary Metrics (Session Close: {prev_close_date}):")
+    print(f"  - Total Equities Evaluated : {total_scanned} stocks")
+    print(f"  - Stocks with Buy Signal   : {len(buy_stocks)} stocks")
+    print(f"  - Multi-Strategy Confluence: {len(confluence_stocks)} stocks (confirmed by 2+ strategies)")
+
+    # Section 2: Display stocks triggering BUY signals on previous close
+    print(f"\n[2] Actionable Stocks Triggering BUY on Previous Close ({len(buy_stocks)} Stocks):")
+    header = (
+        f"{'Ticker':<14} | {'Indicator':<18} | {'Prev Close':<12} | "
+        f"{'Stop Loss':<12} | {'Triggered Strategies (Previous Close)'}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    if not buy_stocks:
+        print("No stocks triggered a buy signal on the previous close.")
+    else:
+        for r in buy_stocks:
+            ticker = r["ticker"]
+            badge = r["indicator_badge"]
+            close_str = f"INR {r['prev_close_price']:>7.2f}"
+            sl_str = f"INR {r['stop_loss']:>7.2f}" if r["stop_loss"] else "N/A"
+            strats = r["strategies_str"]
+            print(
+                f"{ticker:<14} | {badge:<18} | {close_str:<12} | "
+                f"{sl_str:<12} | {strats}"
+            )
+    print("-" * len(header))
+
+    # Section 3: Sample breakdown showing all 4 strategies evaluated for top setups
+    if buy_stocks:
+        sample_stock = buy_stocks[0]
+        print(f"\n[3] Strategy Verification Sample for {sample_stock['ticker']} ({sample_stock['name']}):")
+        for s_name, s_info in sample_stock["strategy_details"].items():
+            triggered_status = "TRIGGERED [BUY]" if s_info["is_buy"] else "NO SIGNAL"
+            sl_info = f" | SL: INR {s_info['stop_loss']:,.2f}" if s_info.get("stop_loss") else ""
+            tp_info = f" | TP: INR {s_info['take_profit']:,.2f}" if s_info.get("take_profit") else ""
+            print(f"    * {s_name:<48}: {triggered_status}{sl_info}{tp_info}")
+
+
 def main() -> None:
     """Initialize and showcase the primary application functionality."""
     if "--kicker" in sys.argv or "--bullish-kicker" in sys.argv:
@@ -444,6 +523,13 @@ def main() -> None:
         example_rsi_indicator()
     elif "--adx" in sys.argv or "--adx-indicator" in sys.argv:
         example_adx_indicator()
+    elif "--scanner" in sys.argv or "--morning-scanner" in sys.argv:
+        scope = (
+            "previous_day"
+            if ("--session" in sys.argv or "--full-day" in sys.argv)
+            else "last_bar"
+        )
+        example_morning_scanner(trigger_scope=scope)
     else:
         example_trading_dashboard()
 

@@ -2,6 +2,7 @@
 
 from ui.backtest_tab import BacktestTab
 from ui.fundamental_screener_tab import FundamentalScreenerTab
+from ui.morning_scanner_tab import MorningScannerTab
 from ui.trading_app import TradingApp
 
-__all__ = ["BacktestTab", "FundamentalScreenerTab", "TradingApp"]
+__all__ = ["BacktestTab", "FundamentalScreenerTab", "MorningScannerTab", "TradingApp"]

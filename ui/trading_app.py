@@ -26,12 +26,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from adx_indicator import calculate_adx
 from config import DB_PATH, TARGET_INDICES
 from market_repository import MarketRepository
-from adx_indicator import calculate_adx
 from rsi_indicator import calculate_rsi
 from ui.backtest_tab import BacktestTab
 from ui.fundamental_screener_tab import FundamentalScreenerTab
+from ui.morning_scanner_tab import MorningScannerTab
 
 
 class TradingApp(QMainWindow):
@@ -286,10 +287,8 @@ class TradingApp(QMainWindow):
         self.tabs.addTab(self.screener_tab, 'Fundamental Screener')
 
         # Morning Scanner Tab
-        self.scanner_tab = QTableWidget(10, 4)
-        self.scanner_tab.setHorizontalHeaderLabels([
-            'Ticker', 'Indicator Setup', 'Signal Output', 'Target Action',
-        ])
+        self.scanner_tab = MorningScannerTab(self.repo)
+        self.scanner_tab.ticker_selected.connect(self.on_scanner_ticker_selected)
         self.tabs.addTab(self.scanner_tab, 'Morning Scanner')
 
         # Trade Execution Journal Tab
@@ -383,6 +382,20 @@ class TradingApp(QMainWindow):
         """
         self.backtest_tab.set_active_ticker(ticker_str)
         self.tabs.setCurrentWidget(self.backtest_tab)
+
+    def on_scanner_ticker_selected(self, ticker_str: str) -> None:
+        """Handle ticker double-click from Morning Scanner tab by switching to Analysis Terminal.
+
+        Args:
+            ticker_str (str): Selected ticker string, e.g. 'INFY.NS (STOCK)'.
+        """
+        self.backtest_tab.set_active_ticker(ticker_str)
+        ticker_sym = ticker_str.split(" ")[0]
+        for i in range(self.ticker_list.count()):
+            if self.ticker_list.item(i).text().startswith(ticker_sym):
+                self.ticker_list.setCurrentRow(i)
+                break
+        self.tabs.setCurrentWidget(self.chart_tab)
 
     def refresh_chart(self):  # noqa: C901
         """Update and re-render Plotly chart with candlesticks, volume, and indicators.

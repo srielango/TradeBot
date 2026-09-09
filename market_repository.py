@@ -133,6 +133,26 @@ class MarketRepository:
             print(f"Database error while fetching stock tickers: {err}")
             return []
 
+    def get_stock_metadata(self) -> dict[str, str]:
+        """Fetch dictionary mapping stock ticker symbols to company names.
+
+        Returns:
+            dict[str, str]: Mapping of ticker (e.g. 'RELIANCE.NS') to company name.
+        """
+        query = """
+            SELECT ticker, name
+            FROM securities
+            WHERE asset_type = 'STOCK'
+            ORDER BY ticker ASC
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                df = pd.read_sql_query(query, conn)
+                return dict(zip(df["ticker"], df["name"]))
+        except sqlite3.Error as err:
+            print(f"Database error while fetching stock metadata: {err}")
+            return {}
+
     def get_all_stocks_data(self) -> dict[str, pd.DataFrame]:
         """Fetch historical hourly price records for all active stocks in a single bulk query.
 

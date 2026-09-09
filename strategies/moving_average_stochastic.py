@@ -9,6 +9,70 @@ from strategies.base_strategy import BaseStrategy
 
 class MovingAverageStochastic(BaseStrategy):
     """Strategy combining 200-day Trend Following Moving Average with Stochastic Oscillator."""
+    
+    """
+    ### 1. Market & Sector Scan
+
+    - Confirm **Nifty above 200‑day MA** (trend filter).
+        
+    - Identify strong sectors (e.g., banking, IT).
+        
+    - Eliminate sectors failing beta/liquidity criteria.
+        
+
+    ### 2. Stock Selection
+
+    - Apply fundamental filters:
+        
+        - PEG > 2
+            
+        - Debt/Equity < 0.5
+            
+        - Market Cap > ₹5,000 crores
+            
+        - Beta > 1.2
+            
+    - Ensure good liquidity and institutional ownership.
+        
+
+    ### 3. Technical Setup
+
+    - Price above 200‑day MA (uptrend).
+        
+    - Stochastic (8,3,3 D & 8,3 K) dips below 20 → watchlist candidate.
+        
+
+    ### 4. Entry Strategy
+
+    - **Aggressive entry**: accumulate while stochastic < 20.
+        
+    - **Conservative entry**: wait for stochastic crossover into buy mode.
+        
+    - Define stop‑loss at recent swing low (conservative) or wider (aggressive).
+        
+
+    ### 5. Exit Plan
+
+    - Target **8–15% returns** depending on entry style.
+        
+    - Trail stop‑loss if price moves favorably.
+        
+    - Exit if stochastic signals reversal or price breaks below 200‑day MA.
+        
+
+    ### 6. Risk Management
+
+    - Risk ≤ 1% of capital per trade.
+        
+    - Position size based on stop‑loss distance.
+        
+    - Maintain discipline and consistency.
+
+    [Swing Trading Strategy - Part 5 - Moving Average & Stochastic Indicator](https://www.youtube.com/watch?v=2Yv0E57_bs4&list=PL9myHLrE5hrPQI6ljQCNZ0KQsnvTsgENG&index=5)
+    ![Embedded YouTube video](https://www.youtube.com/embed/2Yv0E57_bs4?list=PL9myHLrE5hrPQI6ljQCNZ0KQsnvTsgENG&autoplay=true)
+    
+    """
+
 
     def __init__(
         self,
