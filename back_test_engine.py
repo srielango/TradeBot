@@ -50,6 +50,7 @@ class BacktestEngine:
     def run_portfolio(
         self,
         securities_data: dict[str, pd.DataFrame],
+        progress_callback: callable = None,
     ) -> dict:
         """Execute chronological multi-asset portfolio simulation across all securities.
 
@@ -59,6 +60,8 @@ class BacktestEngine:
         Args:
             securities_data (dict[str, pd.DataFrame]): Dictionary mapping security ticker
                 symbols to DataFrames containing price and indicator data.
+            progress_callback (callable | None): Optional callback function invoked as
+                progress_callback(current_idx, total_count, current_date) for progress tracking.
 
         Returns:
             dict: Dictionary containing 'TradeLog' (DataFrame) and 'Metrics' (summary statistics).
@@ -106,10 +109,14 @@ class BacktestEngine:
             ticker_date_data[ticker] = ticker_dict
 
         all_dates = sorted(all_dates_set)
+        total_dates = len(all_dates)
         pending_exits = set()
         pending_entries: dict[str, tuple[float | None, float | None]] = {}
 
-        for date in all_dates:
+        for date_idx, date in enumerate(all_dates, start=1):
+            if progress_callback is not None and (date_idx % 25 == 0 or date_idx == total_dates):
+                progress_callback(date_idx, total_dates, date)
+
             exited_today = set()
 
             # --- 1. Check Intraday Stop Loss & Take Profit on Active Positions ---

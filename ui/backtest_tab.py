@@ -8,6 +8,7 @@ import pandas as pd
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
@@ -18,6 +19,7 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -108,6 +110,20 @@ class BacktestTab(QWidget):
             "border-radius: 4px; padding: 6px 10px; font-size: 11px; }"
         )
         main_layout.addWidget(self.fundamental_status_label)
+
+        # Progress Bar for simulation visual feedback
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setStyleSheet(
+            "QProgressBar { background-color: #1e2227; border: 1px solid #3b4048; "
+            "border-radius: 4px; text-align: center; color: #ffffff; font-weight: bold; "
+            "height: 18px; } "
+            "QProgressBar::chunk { background-color: #2e7d32; border-radius: 3px; }"
+        )
+        self.progress_bar.hide()
+        main_layout.addWidget(self.progress_bar)
 
         # --- Section 2: KPI Metrics Cards ---
         metrics_group = QGroupBox("Performance Summary")
@@ -259,109 +275,181 @@ class BacktestTab(QWidget):
         risk_per_trade = self.risk_input.value() / 100.0
         strategy = strategy_class()
 
-        if ticker_display == "All Stocks":
-            # Retrieve all stock prices in bulk
-            stocks_data = self.repo.get_all_stocks_data()
-            if not stocks_data:
-                QMessageBox.warning(
-                    self,
-                    "No Data Found",
-                    "No price records discovered in database for stocks.",
-                )
-                return
+        # Disable button and display progress bar for real-time visual feedback
+        self.run_button.setEnabled(False)
+        self.progress_bar.show()
+        self.progress_bar.setValue(0)
+        QApplication.processEvents()
 
-            # Compute signals for each security
-            signals_dict = {}
-            for ticker_symbol, df_raw in stocks_data.items():
-                signals_dict[ticker_symbol] = strategy.generate_signals(
+        # Identify if selected strategy operates on daily OHLCV bars
+        is_daily_strategy = any(
+            kw in strategy_name.lower() for kw in ["linda raschke", "holy grail", "daily"]
+        )
+
+        try:
+            if ticker_display == "All Stocks":
+                self.fundamental_status_label.setText(
+                    "<b>Backtest Engine:</b> Loading security records from database..."
+                )
+                self.progress_bar.setValue(5)
+                QApplication.processEvents()
+
+                # Retrieve stock prices in bulk (daily for daily swing strategies, hourly otherwise)
+                if is_daily_strategy:
+                    stocks_data = self.repo.get_all_stocks_daily_data()
+                else:
+                    stocks_data = self.repo.get_all_stocks_data()
+
+                if not stocks_data:
+                    QMessageBox.warning(
+                        self,
+                        "No Data Found",
+                        "No price records discovered in database for stocks.",
+                    )
+                    return
+
+                total_stocks = len(stocks_data)
+                signals_dict = {}
+
+                for idx, (ticker_symbol, df_raw) in enumerate(stocks_data.items(), start=1):
+                    signals_dict[ticker_symbol] = strategy.generate_signals(
+                        df_raw,
+                        capital=capital,
+                        risk_per_trade=risk_per_trade,
+                    )
+                    sig_pct = 5 + int((idx / total_stocks) * 55)
+                    self.progress_bar.setValue(sig_pct)
+                    self.fundamental_status_label.setText(
+                        f"<b>Calculating Signals:</b> Processing {ticker_symbol} "
+                        f"({idx}/{total_stocks})..."
+                    )
+                    QApplication.processEvents()
+
+                self.fundamental_status_label.setText(
+                    f"<b>Simulating Portfolio:</b> Running multi-asset simulation "
+                    f"across {total_stocks} securities..."
+                )
+                self.progress_bar.setValue(65)
+                QApplication.processEvents()
+
+                def on_sim_progress(cur, tot, dt):
+                    sim_pct = 65 + int((cur / tot) * 34)
+                    self.progress_bar.setValue(sim_pct)
+                    self.fundamental_status_label.setText(
+                        f"<b>Simulating Trades:</b> Processing date {dt} ({cur}/{tot})..."
+                    )
+                    QApplication.processEvents()
+
+                engine = BacktestEngine(
+                    initial_capital=capital,
+                    risk_per_trade=risk_per_trade,
+                    allocation_fraction=0.10,
+                )
+                results = engine.run_portfolio(signals_dict, progress_callback=on_sim_progress)
+
+                self.progress_bar.setValue(100)
+                self.fundamental_status_label.setText(
+                    f"<b>Multi-Asset Mode:</b> Strategy executed across <b>{len(stocks_data)}</b> "
+                    f"securities with <b>10%</b> capital allocation per position."
+                )
+
+            else:
+                # Single security backtest
+                self.fundamental_status_label.setText(
+                    f"<b>Backtest Engine:</b> Loading records for {ticker_display}..."
+                )
+                self.progress_bar.setValue(20)
+                QApplication.processEvents()
+
+                if is_daily_strategy:
+                    df_raw = self.repo.get_daily_data(ticker_display)
+                else:
+                    df_raw = self.repo.get_data(ticker_display)
+
+                if df_raw.empty:
+                    QMessageBox.warning(
+                        self,
+                        "No Data Found",
+                        f"No price records discovered in database for {ticker_display}.",
+                    )
+                    return
+
+                self.progress_bar.setValue(45)
+                self.fundamental_status_label.setText(
+                    f"<b>Calculating Signals:</b> Computing indicators for {ticker_display}..."
+                )
+                QApplication.processEvents()
+
+                signals_df = strategy.generate_signals(
                     df_raw,
                     capital=capital,
                     risk_per_trade=risk_per_trade,
                 )
 
-            self.fundamental_status_label.setText(
-                f"<b>Multi-Asset Mode:</b> Strategy executed across <b>{len(stocks_data)}</b> "
-                f"securities with <b>10%</b> capital allocation per position."
-            )
+                # Display security fundamental snapshot from repository cache if available
+                fund_data = self.repo.get_fundamentals(ticker_display)
+                if fund_data:
+                    beta_val = fund_data.get("beta_nsei") or fund_data.get("beta_yf")
+                    beta_str = f"{beta_val:.2f}" if beta_val is not None else "N/A"
+                    mcap_str = (
+                        f"₹ {fund_data['market_cap_cr']:,.0f} Cr"
+                        if fund_data.get("market_cap_cr")
+                        else "N/A"
+                    )
+                    de_str = (
+                        f"{fund_data['debt_to_equity']:.2f}"
+                        if fund_data.get("debt_to_equity") is not None
+                        else "N/A"
+                    )
+                    peg_str = (
+                        f"{fund_data['peg_ratio']:.2f}"
+                        if fund_data.get("peg_ratio") is not None
+                        else "N/A"
+                    )
+                    vol_str = (
+                        f"{int(fund_data['avg_volume_252']):,}"
+                        if fund_data.get("avg_volume_252")
+                        else "N/A"
+                    )
+                    inst_str = (
+                        f"{fund_data['institutional_ownership'] * 100:.1f}%"
+                        if fund_data.get("institutional_ownership")
+                        else "N/A"
+                    )
+                    self.fundamental_status_label.setText(
+                        f"<b>Security Fundamentals:</b> <b>MCap:</b> {mcap_str} | "
+                        f"<b>D/E:</b> {de_str} | <b>PEG:</b> {peg_str} | "
+                        f"<b>Beta (^NSEI):</b> {beta_str} | <b>252d Avg Vol:</b> {vol_str} | "
+                        f"<b>Inst Own:</b> {inst_str}"
+                    )
+                else:
+                    self.fundamental_status_label.setText(
+                        "<b>Security Fundamentals:</b> No cached fundamental snapshot."
+                    )
 
-            engine = BacktestEngine(
-                initial_capital=capital,
-                risk_per_trade=risk_per_trade,
-                allocation_fraction=0.10,
-            )
-            results = engine.run_portfolio(signals_dict)
-
-        else:
-            # Single security backtest
-            df_raw = self.repo.get_data(ticker_display)
-            if df_raw.empty:
-                QMessageBox.warning(
-                    self,
-                    "No Data Found",
-                    f"No price records discovered in database for {ticker_display}.",
-                )
-                return
-
-            signals_df = strategy.generate_signals(
-                df_raw,
-                capital=capital,
-                risk_per_trade=risk_per_trade,
-            )
-
-            # Display security fundamental snapshot from repository cache if available
-            fund_data = self.repo.get_fundamentals(ticker_display)
-            if fund_data:
-                beta_val = fund_data.get("beta_nsei") or fund_data.get("beta_yf")
-                beta_str = f"{beta_val:.2f}" if beta_val is not None else "N/A"
-                mcap_str = (
-                    f"₹ {fund_data['market_cap_cr']:,.0f} Cr"
-                    if fund_data.get("market_cap_cr")
-                    else "N/A"
-                )
-                de_str = (
-                    f"{fund_data['debt_to_equity']:.2f}"
-                    if fund_data.get("debt_to_equity") is not None
-                    else "N/A"
-                )
-                peg_str = (
-                    f"{fund_data['peg_ratio']:.2f}"
-                    if fund_data.get("peg_ratio") is not None
-                    else "N/A"
-                )
-                vol_str = (
-                    f"{int(fund_data['avg_volume_252']):,}"
-                    if fund_data.get("avg_volume_252")
-                    else "N/A"
-                )
-                inst_str = (
-                    f"{fund_data['institutional_ownership'] * 100:.1f}%"
-                    if fund_data.get("institutional_ownership")
-                    else "N/A"
-                )
+                self.progress_bar.setValue(75)
                 self.fundamental_status_label.setText(
-                    f"<b>Security Fundamentals:</b> <b>MCap:</b> {mcap_str} | "
-                    f"<b>D/E:</b> {de_str} | <b>PEG:</b> {peg_str} | "
-                    f"<b>Beta (^NSEI):</b> {beta_str} | <b>252d Avg Vol:</b> {vol_str} | "
-                    f"<b>Inst Own:</b> {inst_str}"
+                    f"<b>Simulating Trades:</b> Running backtest for {ticker_display}..."
                 )
-            else:
-                self.fundamental_status_label.setText(
-                    "<b>Security Fundamentals:</b> No cached fundamental snapshot."
+                QApplication.processEvents()
+
+                ticker_clean = ticker_display.split(" ")[0]
+                engine = BacktestEngine(
+                    initial_capital=capital,
+                    risk_per_trade=risk_per_trade,
+                    allocation_fraction=0.10,
                 )
+                results = engine.run(signals_df, ticker=ticker_clean)
+                self.progress_bar.setValue(100)
 
-            ticker_clean = ticker_display.split(" ")[0]
-            engine = BacktestEngine(
-                initial_capital=capital,
-                risk_per_trade=risk_per_trade,
-                allocation_fraction=0.10,
-            )
-            results = engine.run(signals_df, ticker=ticker_clean)
+            metrics = results["Metrics"]
+            trade_log = results["TradeLog"]
 
-        metrics = results["Metrics"]
-        trade_log = results["TradeLog"]
+            self.current_trade_log = trade_log
+            self.current_metrics = metrics
 
-        self.current_trade_log = trade_log
-        self.current_metrics = metrics
+        finally:
+            self.run_button.setEnabled(True)
 
         # Update KPI Summary Cards
         self.update_metrics(metrics)

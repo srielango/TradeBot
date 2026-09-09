@@ -1,5 +1,6 @@
 """Strategies package containing base strategy definitions and implementations."""
 
+from strategies.adx_ema_swing import AdxEmaSwingStrategy
 from strategies.base_strategy import BaseStrategy
 from strategies.bullish_kicker import BullishKicker
 from strategies.bullish_outside_bar import BullishOutsideBar
@@ -11,10 +12,12 @@ STRATEGY_REGISTRY = {
     "MACD RSI Swing (12, 26, 9)": MacdRsiSwing,
     "Bullish Kicker Pattern (Daily, 9% Target)": BullishKicker,
     "Bullish Outside Bar (Weekly, 10% Target)": BullishOutsideBar,
+    "Linda Raschke ADX + 20 EMA Swing (The Holy Grail)": AdxEmaSwingStrategy,
 }
 
 __all__ = [
     "STRATEGY_REGISTRY",
+    "AdxEmaSwingStrategy",
     "BaseStrategy",
     "BullishKicker",
     "BullishOutsideBar",

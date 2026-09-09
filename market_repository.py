@@ -183,3 +183,65 @@ class MarketRepository:
         except sqlite3.Error as err:
             print(f"Database error while loading all stock prices: {err}")
             return {}
+
+    def get_daily_data(self, display_string: str) -> pd.DataFrame:
+        """Fetch historical daily OHLCV price records for a selected ticker.
+
+        Aggregates stored hourly bars into daily candles:
+        - open: first hourly bar open
+        - high: max hourly bar high
+        - low: min hourly bar low
+        - close: last hourly bar close
+        - volume: sum of hourly volume
+
+        Args:
+            display_string (str): Formatted ticker string from UI, e.g. 'RELIANCE.NS (STOCK)'.
+
+        Returns:
+            pd.DataFrame: DataFrame containing daily OHLCV records sorted by date.
+        """
+        hourly_df = self.get_data(display_string)
+        if hourly_df.empty:
+            return pd.DataFrame()
+
+        hourly_df = hourly_df.copy()
+        hourly_df['day'] = hourly_df['date'].str[:10]
+        daily_df = (
+            hourly_df.groupby('day', as_index=False)
+            .agg(
+                open=('open', 'first'),
+                high=('high', 'max'),
+                low=('low', 'min'),
+                close=('close', 'last'),
+                volume=('volume', 'sum'),
+            )
+            .rename(columns={'day': 'date'})
+        )
+        return daily_df
+
+    def get_all_stocks_daily_data(self) -> dict[str, pd.DataFrame]:
+        """Fetch daily OHLCV price records for all active stocks.
+
+        Returns:
+            dict[str, pd.DataFrame]: Mapping of ticker symbol to daily OHLCV DataFrame.
+        """
+        stocks_hourly = self.get_all_stocks_data()
+        daily_data = {}
+        for ticker, df in stocks_hourly.items():
+            if df.empty:
+                continue
+            df_copy = df.copy()
+            df_copy['day'] = df_copy['date'].str[:10]
+            daily_df = (
+                df_copy.groupby('day', as_index=False)
+                .agg(
+                    open=('open', 'first'),
+                    high=('high', 'max'),
+                    low=('low', 'min'),
+                    close=('close', 'last'),
+                    volume=('volume', 'sum'),
+                )
+                .rename(columns={'day': 'date'})
+            )
+            daily_data[ticker] = daily_df
+        return daily_data

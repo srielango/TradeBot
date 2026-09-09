@@ -13,6 +13,10 @@ from fundamental_screener import FundamentalScreener
 from market_repository import MarketRepository
 from morning_scanner import MorningScanner
 from rsi_indicator import analyze_rsi
+from strategies.adx_ema_swing import (
+    AdxEmaBacktester,
+    AdxEmaSwingStrategy,
+)
 from strategies.bullish_kicker import BullishKicker
 from strategies.bullish_outside_bar import BullishOutsideBar
 from strategies.moving_average_stochastic import MovingAverageStochastic
@@ -509,9 +513,120 @@ def example_morning_scanner(
             print(f"    * {s_name:<48}: {triggered_status}{sl_info}{tp_info}")
 
 
+def example_adx_ema_swing() -> None:
+    """Showcase Linda Raschke's ADX + 20 EMA swing trading strategy (The Holy Grail)."""
+    print("=" * 80)
+    print("LINDA RASCHKE'S ADX + 20 EMA SWING STRATEGY (THE HOLY GRAIL) SHOWCASE")
+    print("=" * 80)
+    print("Strategy Checklist Rules:")
+    print("  1. Trend & Momentum Identification (Daily OHLCV):")
+    print("     - 14-period ADX > 30 and rising into the move.")
+    print("     - Trend direction: +DMI > -DMI for Long, -DMI > +DMI for Short.")
+    print("     - 20-period EMA defines baseline trend support/resistance.")
+    print("  2. Setup Bar (The Retracement):")
+    print("     - Long: Price retraces and touches 20 EMA (Low <= 20 EMA).")
+    print("     - Short: Price rallies and touches 20 EMA (High >= 20 EMA).")
+    print("  3. Entry Trigger (Breakout of Touch Candle):")
+    print("     - Long: Enter Long on break above EMA-touch candle high.")
+    print("     - Short: Enter Short on break below EMA-touch candle low.")
+    print("  4. Stop-Loss & Position Sizing:")
+    print("     - Stop-Loss: Placed at recent swing low (Long) or recent swing high (Short).")
+    print("     - Position Sizing: Risk exactly 1% of portfolio capital per trade.")
+    print("  5. Multi-Condition Exits:")
+    print("     - Stop-Loss: Intraday protection against adverse reversal.")
+    print("     - 2R Target: Profit target exit at 2 x Initial Risk (R).")
+    print("     - ADX < 30: Trend momentum dissipation signal.")
+    print("     - 20 EMA Break: Close below 20 EMA (Long) or close above 20 EMA (Short).")
+    print("-" * 80)
+
+    repo = MarketRepository()
+    strategy = AdxEmaSwingStrategy()
+    backtester = AdxEmaBacktester(strategy=strategy, initial_capital=1_000_000.0)
+
+    # 1. Single-Security Samples
+    sample_tickers = ["INFY.NS", "TCS.NS", "SBIN.NS", "BHARTIARTL.NS", "RELIANCE.NS"]
+    print("\n[1] Single-Security Backtest Samples (INR 1,000,000 Capital, 1% Risk):")
+    sample_header = (
+        f"{'Ticker':<13} | {'Trades':<6} | {'Long':<4} | {'Short':<5} | "
+        f"{'Wins':<4} | {'Losses':<6} | {'Win Rate':<8} | {'Total PnL (INR)':<15} | {'PF':<5}"
+    )
+    print(sample_header)
+    print("-" * len(sample_header))
+
+    for ticker in sample_tickers:
+        daily_df = repo.get_daily_data(ticker)
+        if daily_df.empty:
+            continue
+        res = backtester.run(daily_df, ticker=ticker)
+        m = res["Metrics"]
+        pnl_str = f"INR {m['TotalPnL']:>10,.2f}"
+        print(
+            f"{ticker:<13} | {m['TotalTrades']:<6} | {m['LongTrades']:<4} | "
+            f"{m['ShortTrades']:<5} | {m['Wins']:<4} | {m['Losses']:<6} | "
+            f"{m['WinRatePct']:<7.1f}% | {pnl_str:<15} | {m['ProfitFactor']:<5.2f}"
+        )
+    print("-" * len(sample_header))
+
+    # 2. Multi-Stock Portfolio Backtest across all active stocks
+    print("\n[2] Multi-Stock Portfolio Backtest (All 50 Nifty Stocks, Daily OHLCV):")
+    stocks_daily = repo.get_all_stocks_daily_data()
+    print(f"Loaded daily OHLCV datasets for {len(stocks_daily)} stocks from database.")
+
+    def cli_progress_tracker(current: int, total: int, ticker: str) -> None:
+        pct = float(current) / total
+        bar_len = 28
+        filled = int(bar_len * pct)
+        bar = "=" * filled + "-" * (bar_len - filled)
+        print(
+            f"\r  Progress: [{bar}] {pct * 100:>5.1f}% ({current:>2}/{total}) - {ticker:<14}",
+            end="",
+            flush=True,
+        )
+        if current == total:
+            print()
+
+    portfolio_results = backtester.run_portfolio(
+        stocks_daily, progress_callback=cli_progress_tracker
+    )
+    pm = portfolio_results["Metrics"]
+    trade_log = portfolio_results["TradeLog"]
+
+    print("\n[Portfolio Performance Metrics Summary]:")
+    print(f"  Starting Capital : INR {pm['InitialCapital']:,.2f}")
+    print(f"  Final Capital    : INR {pm['FinalCapital']:,.2f}")
+    print(f"  Total PnL        : INR {pm['TotalPnL']:+,.2f} ({pm['TotalReturnPct']:+.2f}%)")
+    print(f"  Total Trades     : {pm['TotalTrades']}")
+    print(f"  Long Trades      : {pm['LongTrades']}")
+    print(f"  Short Trades     : {pm['ShortTrades']}")
+    print(f"  Winning Trades   : {pm['Wins']}")
+    print(f"  Losing Trades    : {pm['Losses']}")
+    print(f"  Win Rate         : {pm['WinRatePct']:.1f} %")
+    print(f"  Profit Factor    : {pm['ProfitFactor']:.2f}")
+    print(f"  Average Win      : INR {pm['AverageWin']:,.2f}")
+    print(f"  Average Loss     : INR {pm['AverageLoss']:,.2f}")
+    print(f"  Win / Loss Ratio : {pm['WinLossRatio']:.2f}")
+    print(f"  Average R-Mult   : {pm['AverageR']:+.2f} R")
+    print(f"  Max Drawdown     : INR {pm['MaxDrawdown']:,.2f} ({pm['MaxDrawdownPct']:.2f}%)")
+
+    if not trade_log.empty:
+        print("\n[Exit Reasons Breakdown]:")
+        for reason, count in pm["ExitReasons"].items():
+            print(f"  - {reason:<22}: {count:>4} trades")
+
+        print("\n[Recent Trades Sample (Last 10)]:")
+        display_cols = [
+            "TradeID", "Security", "Type", "EntryDate", "ExitDate",
+            "PositionSize", "EntryPrice", "ExitPrice", "PnL", "RMultiple", "Result", "ExitReason",
+        ]
+        sample_df = trade_log[display_cols].tail(10)
+        print(sample_df.to_string(index=False))
+
+
 def main() -> None:
     """Initialize and showcase the primary application functionality."""
-    if "--kicker" in sys.argv or "--bullish-kicker" in sys.argv:
+    if "--holy-grail" in sys.argv or "--adx-ema" in sys.argv or "--linda-raschke" in sys.argv:
+        example_adx_ema_swing()
+    elif "--kicker" in sys.argv or "--bullish-kicker" in sys.argv:
         example_bullish_kicker()
     elif "--outside-bar" in sys.argv or "--bullish-outside-bar" in sys.argv:
         example_bullish_outside_bar()
