@@ -7,6 +7,7 @@ from strategies.bullish_outside_bar import BullishOutsideBar
 from strategies.dual_moving_average_adx import DualMovingAverageAdx
 from strategies.macd_rsi_swing import MacdRsiSwing
 from strategies.moving_average_stochastic import MovingAverageStochastic
+from strategies.rsi_bull_trend_pullback import RsiBullTrendPullback
 
 STRATEGY_REGISTRY = {
     "Moving Average + Stochastic (200 MA, 8,3,3, 15% Target)": MovingAverageStochastic,
@@ -16,6 +17,9 @@ STRATEGY_REGISTRY = {
     "Linda Raschke ADX + 20 EMA Swing (The Holy Grail)": AdxEmaSwingStrategy,
     "Dual Moving Average & Volatility Filter (Daily, 20/50 EMA, ADX > 20)": (
         DualMovingAverageAdx
+    ),
+    "RSI Pullback in Bull Trend (Daily, 200 SMA, RSI 40-70, 15d Max)": (
+        RsiBullTrendPullback
     ),
 }
 
@@ -28,4 +32,5 @@ __all__ = [
     "DualMovingAverageAdx",
     "MacdRsiSwing",
     "MovingAverageStochastic",
+    "RsiBullTrendPullback",
 ]

@@ -21,6 +21,7 @@ from strategies.bullish_kicker import BullishKicker
 from strategies.bullish_outside_bar import BullishOutsideBar
 from strategies.dual_moving_average_adx import DualMovingAverageAdx
 from strategies.moving_average_stochastic import MovingAverageStochastic
+from strategies.rsi_bull_trend_pullback import RsiBullTrendPullback
 from ui import TradingApp
 
 
@@ -710,9 +711,102 @@ def example_dual_moving_average_adx() -> None:
         print(sample_df.to_string(index=False))
 
 
+def example_rsi_bull_trend_pullback() -> None:
+    """Showcase RSI Pullback in a Bull Trend strategy (200 SMA + RSI 40-70 + 15d)."""
+    print("=" * 80)
+    print("RSI PULLBACK IN A BULL TREND STRATEGY SHOWCASE")
+    print("=" * 80)
+    print("Strategy Checklist Rules:")
+    print("  1. Indicators Needed:")
+    print("     - 200-day Simple Moving Average (SMA) for structural trend.")
+    print("     - 14-period Relative Strength Index (RSI).")
+    print("  2. Buy Trigger:")
+    print("     - Closing price must be completely above 200 SMA (Structural Bull Market).")
+    print("     - 14-day RSI drops below 40 (Oversold pullback in uptrend).")
+    print("     - Buy on next candle's open as soon as RSI crosses back above 40.")
+    print("  3. Stop Loss:")
+    print("     - Lower of the last 5 days' price low, or a close below the 200 SMA.")
+    print("  4. Sell / Exit Signal:")
+    print("     - Exit when RSI reaches overbought zone of 70 (RSI >= 70).")
+    print("     - OR after a maximum holding period of 15 trading days.")
+    print("     - OR structural breakdown (close < 200 SMA).")
+    print("  5. Position Sizing:")
+    print("     - Risk exactly 1% of total portfolio capital per trade.")
+    print("-" * 80)
+
+    repo = MarketRepository()
+    strategy = RsiBullTrendPullback()
+
+    # 1. Single-Security Samples
+    sample_tickers = ["INFY.NS", "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS"]
+    print("\n[1] Single-Security Backtest Sample (INR 1,000,000 Capital, 1% Risk):")
+    sample_header = (
+        f"{'Ticker':<14} | {'Trades':<8} | {'Wins':<6} | {'Losses':<8} | "
+        f"{'Win Rate':<10} | {'Total PnL (INR)':<16}"
+    )
+    print(sample_header)
+    print("-" * len(sample_header))
+
+    engine = BacktestEngine(initial_capital=1_000_000.0)
+    for ticker in sample_tickers:
+        df = repo.get_daily_data(ticker)
+        if df.empty:
+            continue
+        signals_df = strategy.generate_signals(df)
+        res = engine.run(signals_df, ticker=ticker)
+        m = res["Metrics"]
+        pnl_str = f"INR {m['TotalPnL']:>11,.2f}"
+        print(
+            f"{ticker:<14} | {m['TotalTrades']:<8} | {m['Wins']:<6} | {m['Losses']:<8} | "
+            f"{m['WinRatePct']:<9.1f}% | {pnl_str}"
+        )
+    print("-" * len(sample_header))
+
+    # 2. Multi-Stock Portfolio Backtest across all stocks
+    print("\n[2] Multi-Stock Portfolio Backtest (All Active Stocks, 10% Capital Allocation):")
+    stocks_data = repo.get_all_stocks_daily_data()
+    print(f"Loaded daily price records for {len(stocks_data)} active stocks from database.")
+
+    signals_dict = {}
+    for ticker, df in stocks_data.items():
+        signals_dict[ticker] = strategy.generate_signals(df)
+
+    engine_portfolio = BacktestEngine(
+        initial_capital=1_000_000.0,
+        allocation_fraction=0.10,
+    )
+    portfolio_results = engine_portfolio.run_portfolio(signals_dict)
+
+    pm = portfolio_results["Metrics"]
+    trade_log = portfolio_results["TradeLog"]
+
+    print("\n[Portfolio Performance Metrics Summary]:")
+    print(f"  Total Trades   : {pm['TotalTrades']}")
+    print(f"  Winning Trades : {pm['Wins']}")
+    print(f"  Losing Trades  : {pm['Losses']}")
+    print(f"  Win Rate       : {pm['WinRatePct']:.1f} %")
+    print(f"  Total Net PnL  : INR {pm['TotalPnL']:,.2f}")
+    print(f"  Final Capital  : INR {pm['FinalCapital']:,.2f}")
+
+    if not trade_log.empty:
+        print("\n[Recent Trades Sample (Last 10)]:")
+        display_cols = [
+            "Security", "EntryDate", "ExitDate", "PositionSize",
+            "EntryPrice", "ExitPrice", "PnL", "ReturnPct", "Result", "ExitReason",
+        ]
+        sample_df = trade_log[display_cols].tail(10)
+        print(sample_df.to_string(index=False))
+
+
 def main() -> None:
     """Initialize and showcase the primary application functionality."""
     if (
+        "--rsi-pullback" in sys.argv
+        or "--bull-pullback" in sys.argv
+        or "--rsi-bull" in sys.argv
+    ):
+        example_rsi_bull_trend_pullback()
+    elif (
         "--dual-ema" in sys.argv
         or "--conservative-trend" in sys.argv
         or "--dual-moving-average" in sys.argv
