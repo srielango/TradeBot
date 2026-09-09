@@ -56,40 +56,50 @@ class BacktestTab(QWidget):
 
         # --- Section 1: Configuration Controls Bar ---
         config_group = QGroupBox("Backtest Setup & Parameters")
-        config_layout = QHBoxLayout(config_group)
-        config_layout.setSpacing(12)
+        config_layout = QGridLayout(config_group)
+        config_layout.setSpacing(10)
+        config_layout.setContentsMargins(12, 10, 12, 10)
 
         # Strategy Selector
-        config_layout.addWidget(QLabel("<b>Strategy:</b>"))
+        config_layout.addWidget(QLabel("<b>Strategy:</b>"), 0, 0)
         self.strategy_selector = QComboBox()
         self.strategy_selector.addItems(list(STRATEGY_REGISTRY.keys()))
-        config_layout.addWidget(self.strategy_selector)
+        self.strategy_selector.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.strategy_selector.setMinimumContentsLength(20)
+        config_layout.addWidget(self.strategy_selector, 0, 1)
 
         # Security / Ticker Selector (Defaults to 'All Stocks')
-        config_layout.addWidget(QLabel("<b>Security:</b>"))
+        config_layout.addWidget(QLabel("<b>Security:</b>"), 0, 2)
         self.ticker_selector = QComboBox()
+        self.ticker_selector.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.ticker_selector.setMinimumContentsLength(14)
         self.populate_tickers()
-        config_layout.addWidget(self.ticker_selector)
+        config_layout.addWidget(self.ticker_selector, 0, 3)
 
         # Initial Capital Input
-        config_layout.addWidget(QLabel("<b>Capital (INR):</b>"))
+        config_layout.addWidget(QLabel("<b>Capital (INR):</b>"), 1, 0)
         self.capital_input = QDoubleSpinBox()
         self.capital_input.setRange(10_000, 100_000_000)
         self.capital_input.setSingleStep(50_000)
         self.capital_input.setValue(DEFAULT_INITIAL_CAPITAL)
         self.capital_input.setPrefix("₹ ")
-        config_layout.addWidget(self.capital_input)
+        config_layout.addWidget(self.capital_input, 1, 1)
 
-        # Risk Per Trade Input
-        config_layout.addWidget(QLabel("<b>Risk/Trade:</b>"))
+        # Risk Per Trade Input & Execute Button
+        config_layout.addWidget(QLabel("<b>Risk/Trade:</b>"), 1, 2)
+        risk_exec_layout = QHBoxLayout()
+        risk_exec_layout.setSpacing(8)
         self.risk_input = QDoubleSpinBox()
         self.risk_input.setRange(0.1, 10.0)
         self.risk_input.setSingleStep(0.25)
         self.risk_input.setValue(DEFAULT_RISK_PER_TRADE * 100)
         self.risk_input.setSuffix(" %")
-        config_layout.addWidget(self.risk_input)
+        risk_exec_layout.addWidget(self.risk_input)
 
-        # Execute Button
         self.run_button = QPushButton("Run Backtest")
         self.run_button.setStyleSheet(
             "QPushButton { background-color: #2e7d32; color: white; font-weight: bold; "
@@ -97,7 +107,8 @@ class BacktestTab(QWidget):
             "QPushButton:hover { background-color: #388e3c; }"
         )
         self.run_button.clicked.connect(self.execute_backtest)
-        config_layout.addWidget(self.run_button)
+        risk_exec_layout.addWidget(self.run_button)
+        config_layout.addLayout(risk_exec_layout, 1, 3)
 
         main_layout.addWidget(config_group)
 

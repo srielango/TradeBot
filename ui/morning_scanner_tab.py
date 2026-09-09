@@ -93,46 +93,59 @@ class MorningScannerTab(QWidget):
         # Section 1: Toolbar & Scan Controls
         # =====================================================================
         control_group = QGroupBox("Morning Scanner Controls & Parameters")
-        control_layout = QHBoxLayout(control_group)
-        control_layout.setSpacing(12)
+        control_layout = QGridLayout(control_group)
+        control_layout.setSpacing(10)
         control_layout.setContentsMargins(12, 10, 12, 10)
 
         # Lookback Window Selector
-        control_layout.addWidget(QLabel("<b>Analysis Lookback:</b>"))
+        control_layout.addWidget(QLabel("<b>Analysis Lookback:</b>"), 0, 0)
         self.lookback_combo = QComboBox()
         self.lookback_combo.addItem("6 Months (Recommended for 200 MA)", 6)
         self.lookback_combo.addItem("3 Months (Fast Momentum)", 3)
+        self.lookback_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.lookback_combo.setMinimumContentsLength(18)
         self.lookback_combo.setCurrentIndex(0)
         self.lookback_combo.currentIndexChanged.connect(self.run_scanner)
-        control_layout.addWidget(self.lookback_combo)
+        control_layout.addWidget(self.lookback_combo, 0, 1)
 
         # Trigger Scope Selector
-        control_layout.addWidget(QLabel("<b>Trigger Scope:</b>"))
+        control_layout.addWidget(QLabel("<b>Trigger Scope:</b>"), 0, 2)
         self.trigger_scope_combo = QComboBox()
         self.trigger_scope_combo.addItem("Previous Close Bar (Strict 15:15)", "last_bar")
         self.trigger_scope_combo.addItem("Previous Trading Day (Full Session)", "previous_day")
+        self.trigger_scope_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.trigger_scope_combo.setMinimumContentsLength(18)
         self.trigger_scope_combo.setCurrentIndex(0)
         self.trigger_scope_combo.currentIndexChanged.connect(self.run_scanner)
-        control_layout.addWidget(self.trigger_scope_combo)
+        control_layout.addWidget(self.trigger_scope_combo, 0, 3)
 
         # Signal Status Filter
-        control_layout.addWidget(QLabel("<b>Filter Signal:</b>"))
+        control_layout.addWidget(QLabel("<b>Filter Signal:</b>"), 1, 0)
         self.filter_combo = QComboBox()
         self.filter_combo.addItem("All Stocks (50)", "all")
         self.filter_combo.addItem("Buy Signals Only", "buy_only")
         self.filter_combo.addItem("Multi-Strategy Confluence (2+)", "confluence_only")
+        self.filter_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.filter_combo.setMinimumContentsLength(16)
         self.filter_combo.setCurrentIndex(0)
         self.filter_combo.currentIndexChanged.connect(self.apply_table_filters)
-        control_layout.addWidget(self.filter_combo)
+        control_layout.addWidget(self.filter_combo, 1, 1)
 
-        # Live Search by Ticker / Company
-        control_layout.addWidget(QLabel("<b>Search:</b>"))
+        # Live Search by Ticker / Company & Action Buttons
+        search_actions_layout = QHBoxLayout()
+        search_actions_layout.setSpacing(8)
+        search_actions_layout.addWidget(QLabel("<b>Search:</b>"))
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search ticker or company name...")
         self.search_input.textChanged.connect(self.apply_table_filters)
-        control_layout.addWidget(self.search_input)
+        search_actions_layout.addWidget(self.search_input)
 
-        # Run Scan Action Button
         self.btn_run_scan = QPushButton("▶ Run Morning Scan")
         self.btn_run_scan.setStyleSheet(
             "QPushButton { background-color: #27ae60; color: white; font-weight: bold; "
@@ -140,9 +153,8 @@ class MorningScannerTab(QWidget):
             "QPushButton:hover { background-color: #2ecc71; }"
         )
         self.btn_run_scan.clicked.connect(self.run_scanner)
-        control_layout.addWidget(self.btn_run_scan)
+        search_actions_layout.addWidget(self.btn_run_scan)
 
-        # Export CSV Button
         self.btn_export_csv = QPushButton("Export CSV")
         self.btn_export_csv.setStyleSheet(
             "QPushButton { background-color: #3b4048; color: #abb2bf; font-weight: bold; "
@@ -150,7 +162,9 @@ class MorningScannerTab(QWidget):
             "QPushButton:hover { background-color: #4b5263; color: white; }"
         )
         self.btn_export_csv.clicked.connect(self.export_csv)
-        control_layout.addWidget(self.btn_export_csv)
+        search_actions_layout.addWidget(self.btn_export_csv)
+
+        control_layout.addLayout(search_actions_layout, 1, 2, 1, 2)
 
         main_layout.addWidget(control_group)
 
@@ -229,7 +243,9 @@ class MorningScannerTab(QWidget):
         # =====================================================================
         # Section 4: Detailed Strategy Inspector Panel for Selected Stock
         # =====================================================================
-        self.detail_group = QGroupBox("Selected Stock Strategy Breakdown (Previous Close Evaluation)")
+        self.detail_group = QGroupBox(
+            "Selected Stock Strategy Breakdown (Previous Close Evaluation)"
+        )
         detail_layout = QGridLayout(self.detail_group)
         detail_layout.setSpacing(8)
         detail_layout.setContentsMargins(12, 8, 12, 8)
@@ -240,8 +256,10 @@ class MorningScannerTab(QWidget):
             col = (idx % 2) * 2
             title_lbl = QLabel(f"<b>{strat_name}:</b>")
             title_lbl.setStyleSheet("color: #9da5b4;")
+            title_lbl.setWordWrap(True)
             val_lbl = QLabel("Awaiting selection...")
             val_lbl.setStyleSheet("color: #abb2bf;")
+            val_lbl.setWordWrap(True)
             detail_layout.addWidget(title_lbl, row, col)
             detail_layout.addWidget(val_lbl, row, col + 1)
             self.strategy_labels[strat_name] = val_lbl

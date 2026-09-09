@@ -190,7 +190,7 @@ class FundamentalScreenerTab(QWidget):
         self.cb_roe.toggled.connect(self.apply_filters)
         self.sb_roe.valueChanged.connect(self.apply_filters)
 
-        # Grid Placement (Row 0: MCap, D/E, PEG, Beta | Row 1: Avg Vol, Inst%, ROE, Reset)
+        # Grid Placement (3 criteria per row for clean responsiveness on all displays)
         filter_layout.addWidget(self.cb_mcap, 0, 0)
         filter_layout.addWidget(self.sb_mcap, 0, 1)
 
@@ -200,17 +200,17 @@ class FundamentalScreenerTab(QWidget):
         filter_layout.addWidget(self.cb_peg, 0, 4)
         filter_layout.addWidget(self.sb_peg, 0, 5)
 
-        filter_layout.addWidget(self.cb_beta, 0, 6)
-        filter_layout.addWidget(self.sb_beta, 0, 7)
+        filter_layout.addWidget(self.cb_beta, 1, 0)
+        filter_layout.addWidget(self.sb_beta, 1, 1)
 
-        filter_layout.addWidget(self.cb_vol, 1, 0)
-        filter_layout.addWidget(self.sb_vol, 1, 1)
+        filter_layout.addWidget(self.cb_vol, 1, 2)
+        filter_layout.addWidget(self.sb_vol, 1, 3)
 
-        filter_layout.addWidget(self.cb_inst, 1, 2)
-        filter_layout.addWidget(self.sb_inst, 1, 3)
+        filter_layout.addWidget(self.cb_inst, 1, 4)
+        filter_layout.addWidget(self.sb_inst, 1, 5)
 
-        filter_layout.addWidget(self.cb_roe, 1, 4)
-        filter_layout.addWidget(self.sb_roe, 1, 5)
+        filter_layout.addWidget(self.cb_roe, 2, 0)
+        filter_layout.addWidget(self.sb_roe, 2, 1)
 
         # Reset & Select All Actions
         btn_reset = QPushButton("Reset Criteria")
@@ -219,7 +219,7 @@ class FundamentalScreenerTab(QWidget):
             "border-radius: 4px; } QPushButton:hover { background-color: #4b5263; color: white; }"
         )
         btn_reset.clicked.connect(self.reset_filters)
-        filter_layout.addWidget(btn_reset, 1, 6, 1, 2)
+        filter_layout.addWidget(btn_reset, 2, 2, 1, 2)
 
         main_layout.addWidget(filter_group)
 

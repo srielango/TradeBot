@@ -11,6 +11,7 @@ from plotly.subplots import make_subplots
 # like Pylint cannot inspect without dynamic loading.
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QHBoxLayout,
@@ -42,7 +43,17 @@ class TradingApp(QMainWindow):
         """Initialize the main window, data repository, and user interface components."""
         super().__init__()
         self.setWindowTitle('Tradebot Management Studio')
-        self.resize(1400, 900)
+
+        # Adaptively size window to fit comfortable proportions of available screen work area
+        screen = QApplication.primaryScreen()
+        if screen:
+            avail_geo = screen.availableGeometry()
+            target_w = min(1380, max(950, int(avail_geo.width() * 0.88)))
+            target_h = min(880, max(600, int(avail_geo.height() * 0.88)))
+            self.resize(target_w, target_h)
+        else:
+            self.resize(1150, 720)
+
         self.repo = MarketRepository(DB_PATH)
 
         # Store full ticker list so the search filter can operate on it
