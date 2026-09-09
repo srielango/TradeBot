@@ -301,6 +301,7 @@ class BacktestTab(QWidget):
                 "daily",
                 "dual moving average",
                 "rsi pullback",
+                "bollinger",
             ]
         )
 

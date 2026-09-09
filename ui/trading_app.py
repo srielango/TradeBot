@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -28,9 +29,11 @@ from PyQt6.QtWidgets import (
 )
 
 from adx_indicator import calculate_adx
+from bollinger_bands import calculate_bollinger_bands
 from config import DB_PATH, TARGET_INDICES
 from market_repository import MarketRepository
 from rsi_indicator import calculate_rsi
+from stoch_rsi_indicator import calculate_stoch_rsi
 from ui.backtest_tab import BacktestTab
 from ui.fundamental_screener_tab import FundamentalScreenerTab
 from ui.morning_scanner_tab import MorningScannerTab
@@ -223,6 +226,36 @@ class TradingApp(QMainWindow):
         self.multi_ema_widget.setVisible(False)
         sidebar.addWidget(self.multi_ema_widget)
 
+        # Bollinger Bands checkbox
+        self.bb_check = QCheckBox('Bollinger Bands')
+        self.bb_check.stateChanged.connect(self._on_bb_toggled)
+        sidebar.addWidget(self.bb_check)
+
+        # Bollinger Bands parameter widget (hidden by default)
+        self.bb_widget = QWidget()
+        bb_layout = QVBoxLayout(self.bb_widget)
+        bb_layout.setContentsMargins(12, 0, 0, 0)
+
+        self.bb_period = QSpinBox()
+        self.bb_period.setRange(2, 100)
+        self.bb_period.setValue(20)
+        bb_layout.addWidget(QLabel('BB Period'))
+        bb_layout.addWidget(self.bb_period)
+
+        self.bb_std = QDoubleSpinBox()
+        self.bb_std.setRange(0.5, 5.0)
+        self.bb_std.setSingleStep(0.1)
+        self.bb_std.setDecimals(1)
+        self.bb_std.setValue(2.0)
+        bb_layout.addWidget(QLabel('Std Deviations'))
+        bb_layout.addWidget(self.bb_std)
+
+        self.bb_period.valueChanged.connect(self.refresh_chart)
+        self.bb_std.valueChanged.connect(self.refresh_chart)
+
+        self.bb_widget.setVisible(False)
+        sidebar.addWidget(self.bb_widget)
+
         # Relative Strength Index (RSI) checkbox
         self.rsi_check = QCheckBox('RSI')
         self.rsi_check.stateChanged.connect(self._on_rsi_toggled)
@@ -257,6 +290,48 @@ class TradingApp(QMainWindow):
 
         self.rsi_widget.setVisible(False)
         sidebar.addWidget(self.rsi_widget)
+
+        # Stochastic RSI checkbox
+        self.stoch_rsi_check = QCheckBox('Stochastic RSI')
+        self.stoch_rsi_check.stateChanged.connect(self._on_stoch_rsi_toggled)
+        sidebar.addWidget(self.stoch_rsi_check)
+
+        # Stochastic RSI parameter widget (hidden by default)
+        self.stoch_rsi_widget = QWidget()
+        stoch_rsi_layout = QVBoxLayout(self.stoch_rsi_widget)
+        stoch_rsi_layout.setContentsMargins(12, 0, 0, 0)
+
+        self.stoch_rsi_period = QSpinBox()
+        self.stoch_rsi_period.setRange(2, 100)
+        self.stoch_rsi_period.setValue(14)
+        stoch_rsi_layout.addWidget(QLabel('RSI Period'))
+        stoch_rsi_layout.addWidget(self.stoch_rsi_period)
+
+        self.stoch_rsi_window = QSpinBox()
+        self.stoch_rsi_window.setRange(2, 100)
+        self.stoch_rsi_window.setValue(14)
+        stoch_rsi_layout.addWidget(QLabel('Stoch Window'))
+        stoch_rsi_layout.addWidget(self.stoch_rsi_window)
+
+        self.stoch_rsi_k = QSpinBox()
+        self.stoch_rsi_k.setRange(1, 20)
+        self.stoch_rsi_k.setValue(3)
+        stoch_rsi_layout.addWidget(QLabel('%K Smoothing'))
+        stoch_rsi_layout.addWidget(self.stoch_rsi_k)
+
+        self.stoch_rsi_d = QSpinBox()
+        self.stoch_rsi_d.setRange(1, 20)
+        self.stoch_rsi_d.setValue(3)
+        stoch_rsi_layout.addWidget(QLabel('%D Smoothing'))
+        stoch_rsi_layout.addWidget(self.stoch_rsi_d)
+
+        self.stoch_rsi_period.valueChanged.connect(self.refresh_chart)
+        self.stoch_rsi_window.valueChanged.connect(self.refresh_chart)
+        self.stoch_rsi_k.valueChanged.connect(self.refresh_chart)
+        self.stoch_rsi_d.valueChanged.connect(self.refresh_chart)
+
+        self.stoch_rsi_widget.setVisible(False)
+        sidebar.addWidget(self.stoch_rsi_widget)
 
         # Average Directional Index (ADX) checkbox
         self.adx_check = QCheckBox('ADX')
@@ -369,9 +444,19 @@ class TradingApp(QMainWindow):
         self.multi_ema_widget.setVisible(self.multi_ema_check.isChecked())
         self.refresh_chart()
 
+    def _on_bb_toggled(self) -> None:
+        """Show/hide Bollinger Bands parameter panel based on checkbox state."""
+        self.bb_widget.setVisible(self.bb_check.isChecked())
+        self.refresh_chart()
+
     def _on_rsi_toggled(self) -> None:
         """Show/hide RSI parameter panel based on checkbox state."""
         self.rsi_widget.setVisible(self.rsi_check.isChecked())
+        self.refresh_chart()
+
+    def _on_stoch_rsi_toggled(self) -> None:
+        """Show/hide Stochastic RSI parameter panel based on checkbox state."""
+        self.stoch_rsi_widget.setVisible(self.stoch_rsi_check.isChecked())
         self.refresh_chart()
 
     def _on_adx_toggled(self) -> None:
@@ -493,7 +578,9 @@ class TradingApp(QMainWindow):
         stoch_active = self.stoch_check.isChecked()
         ma_active = self.ma_check.isChecked()
         multi_ema_active = self.multi_ema_check.isChecked()
+        bb_active = self.bb_check.isChecked()
         rsi_active = self.rsi_check.isChecked()
+        stoch_rsi_active = self.stoch_rsi_check.isChecked()
         adx_active = self.adx_check.isChecked()
         beta_active = self.beta_check.isChecked()
 
@@ -503,6 +590,8 @@ class TradingApp(QMainWindow):
             active_subplots.append('Stochastic')
         if rsi_active:
             active_subplots.append('RSI')
+        if stoch_rsi_active:
+            active_subplots.append('StochRSI')
         if adx_active:
             active_subplots.append('ADX')
         if beta_active:
@@ -682,6 +771,56 @@ class TradingApp(QMainWindow):
                     col=1,
                 )
 
+        # Subplot 1 overlay: Bollinger Bands
+        if bb_active:
+            bb_period = self.bb_period.value()
+            bb_std = self.bb_std.value()
+
+            bb_df = calculate_bollinger_bands(
+                df_full['close'], period=bb_period, num_std=bb_std
+            )
+
+            # Upper Band
+            fig.add_trace(
+                go.Scatter(
+                    x=df_display['date'],
+                    y=bb_df.loc[df_display.index, 'BB_Upper'],
+                    mode='lines',
+                    name=f'BB Upper ({bb_period}, {bb_std}\u03c3)',
+                    line={'color': 'rgba(38, 166, 154, 0.65)', 'width': 1.2},
+                ),
+                row=1,
+                col=1,
+            )
+
+            # Lower Band (fill='tonexty' fills area between Upper and Lower Band)
+            fig.add_trace(
+                go.Scatter(
+                    x=df_display['date'],
+                    y=bb_df.loc[df_display.index, 'BB_Lower'],
+                    mode='lines',
+                    name=f'BB Lower ({bb_period}, {bb_std}\u03c3)',
+                    line={'color': 'rgba(38, 166, 154, 0.65)', 'width': 1.2},
+                    fill='tonexty',
+                    fillcolor='rgba(38, 166, 154, 0.08)',
+                ),
+                row=1,
+                col=1,
+            )
+
+            # Middle Band (SMA)
+            fig.add_trace(
+                go.Scatter(
+                    x=df_display['date'],
+                    y=bb_df.loc[df_display.index, 'BB_Middle'],
+                    mode='lines',
+                    name=f'BB Middle ({bb_period})',
+                    line={'color': '#FFA726', 'width': 1.2, 'dash': 'dot'},
+                ),
+                row=1,
+                col=1,
+            )
+
         # Subplot: Relative Strength Index (RSI)
         if rsi_active:
             rsi_row = get_sub_row('RSI')
@@ -742,6 +881,87 @@ class TradingApp(QMainWindow):
                 col=1,
                 range=[0, 100],
                 tickvals=rsi_ticks,
+            )
+
+        # Subplot: Stochastic RSI
+        if stoch_rsi_active:
+            stoch_rsi_row = get_sub_row('StochRSI')
+            rsi_p = self.stoch_rsi_period.value()
+            stoch_p = self.stoch_rsi_window.value()
+            k_p = self.stoch_rsi_k.value()
+            d_p = self.stoch_rsi_d.value()
+
+            srsi_df = calculate_stoch_rsi(
+                df_full['close'],
+                rsi_period=rsi_p,
+                stoch_period=stoch_p,
+                k_period=k_p,
+                d_period=d_p,
+            )
+
+            # %K Line
+            fig.add_trace(
+                go.Scatter(
+                    x=df_display['date'],
+                    y=srsi_df.loc[df_display.index, 'StochRSI_K'],
+                    mode='lines',
+                    name=f'StochRSI %K ({rsi_p},{stoch_p},{k_p})',
+                    line={'color': '#00E5FF', 'width': 1.5},
+                ),
+                row=stoch_rsi_row,
+                col=1,
+            )
+
+            # %D Line
+            fig.add_trace(
+                go.Scatter(
+                    x=df_display['date'],
+                    y=srsi_df.loc[df_display.index, 'StochRSI_D'],
+                    mode='lines',
+                    name=f'StochRSI %D ({d_p})',
+                    line={'color': '#FF4081', 'width': 1.2},
+                ),
+                row=stoch_rsi_row,
+                col=1,
+            )
+
+            # Overbought reference line (80)
+            fig.add_hline(
+                y=80,
+                line_dash='dash',
+                line_color='#FF5252',
+                row=stoch_rsi_row,
+                col=1,
+                annotation_text='OB (80)',
+                annotation_position='right',
+            )
+
+            # Oversold reference line (20)
+            fig.add_hline(
+                y=20,
+                line_dash='dash',
+                line_color='#69F0AE',
+                row=stoch_rsi_row,
+                col=1,
+                annotation_text='OS (20)',
+                annotation_position='right',
+            )
+
+            # Midline reference line (50)
+            fig.add_hline(
+                y=50,
+                line_dash='dot',
+                line_color='gray',
+                row=stoch_rsi_row,
+                col=1,
+            )
+
+            fig.update_yaxes(
+                title_text="Stoch RSI",
+                row=stoch_rsi_row,
+                col=1,
+                range=[0, 100],
+                tickvals=[0, 20, 50, 80, 100],
             )
 
         # Subplot: Average Directional Index (ADX)

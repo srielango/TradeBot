@@ -17,6 +17,7 @@ from strategies.adx_ema_swing import (
     AdxEmaBacktester,
     AdxEmaSwingStrategy,
 )
+from strategies.bollinger_stoch_rsi import BollingerStochRsi
 from strategies.bullish_kicker import BullishKicker
 from strategies.bullish_outside_bar import BullishOutsideBar
 from strategies.dual_moving_average_adx import DualMovingAverageAdx
@@ -447,7 +448,11 @@ def example_morning_scanner(
         lookback_months (int): Historical window (3 to 6 months) for indicator warm-up.
         trigger_scope (str): 'last_bar' (strict close) or 'previous_day' (full day session).
     """
-    scope_label = "Previous Close Bar (Strict 15:15)" if trigger_scope == "last_bar" else "Previous Trading Day (Full Session)"
+    scope_label = (
+        "Previous Close Bar (Strict 15:15)"
+        if trigger_scope == "last_bar"
+        else "Previous Trading Day (Full Session)"
+    )
     print("=" * 100)
     print("TRADEBOT MORNING SCANNER - PREVIOUS CLOSE BUY SIGNALS")
     print("=" * 100)
@@ -455,8 +460,8 @@ def example_morning_scanner(
     print("  1. Universe: All 50 active equity stocks from database (excluding market indices).")
     print(f"  2. Indicator Warm-up: Past {lookback_months} months of historical data used.")
     print(f"  3. Trigger Scope: {scope_label}.")
-    print("  4. Trigger Logic: Strategy shown against stock ONLY if BUY was triggered in the scope window.")
-    print("  5. Confluence: If multiple strategies indicate BUY, all are listed next to that stock.")
+    print("  4. Trigger Logic: Strategy shown against stock ONLY if BUY was triggered in scope.")
+    print("  5. Confluence: If multiple strategies indicate BUY, all are listed next to stock.")
     print("-" * 100)
 
     scanner = MorningScanner()
@@ -478,7 +483,10 @@ def example_morning_scanner(
     print(f"\n[1] Scan Summary Metrics (Session Close: {prev_close_date}):")
     print(f"  - Total Equities Evaluated : {total_scanned} stocks")
     print(f"  - Stocks with Buy Signal   : {len(buy_stocks)} stocks")
-    print(f"  - Multi-Strategy Confluence: {len(confluence_stocks)} stocks (confirmed by 2+ strategies)")
+    print(
+        f"  - Multi-Strategy Confluence: {len(confluence_stocks)} stocks "
+        "(confirmed by 2+ strategies)"
+    )
 
     # Section 2: Display stocks triggering BUY signals on previous close
     print(f"\n[2] Actionable Stocks Triggering BUY on Previous Close ({len(buy_stocks)} Stocks):")
@@ -507,11 +515,21 @@ def example_morning_scanner(
     # Section 3: Sample breakdown showing all 4 strategies evaluated for top setups
     if buy_stocks:
         sample_stock = buy_stocks[0]
-        print(f"\n[3] Strategy Verification Sample for {sample_stock['ticker']} ({sample_stock['name']}):")
+        sym = sample_stock['ticker']
+        s_name = sample_stock['name']
+        print(f"\n[3] Strategy Verification Sample for {sym} ({s_name}):")
         for s_name, s_info in sample_stock["strategy_details"].items():
             triggered_status = "TRIGGERED [BUY]" if s_info["is_buy"] else "NO SIGNAL"
-            sl_info = f" | SL: INR {s_info['stop_loss']:,.2f}" if s_info.get("stop_loss") else ""
-            tp_info = f" | TP: INR {s_info['take_profit']:,.2f}" if s_info.get("take_profit") else ""
+            sl_info = (
+                f" | SL: INR {s_info['stop_loss']:,.2f}"
+                if s_info.get("stop_loss")
+                else ""
+            )
+            tp_info = (
+                f" | TP: INR {s_info['take_profit']:,.2f}"
+                if s_info.get("take_profit")
+                else ""
+            )
             print(f"    * {s_name:<48}: {triggered_status}{sl_info}{tp_info}")
 
 
@@ -798,9 +816,103 @@ def example_rsi_bull_trend_pullback() -> None:
         print(sample_df.to_string(index=False))
 
 
+def example_bollinger_stoch_rsi() -> None:
+    """Showcase Mean Reversion via Bollinger Bands & Stochastic RSI strategy."""
+    print("=" * 80)
+    print("MEAN REVERSION VIA BOLLINGER BANDS & STOCHASTIC RSI SHOWCASE")
+    print("=" * 80)
+    print("Strategy Checklist Rules:")
+    print("  1. Indicators Needed:")
+    print("     - Bollinger Bands (20-period SMA, 2.0 Standard Deviations).")
+    print("     - Stochastic RSI (14-period RSI, 14-period Stoch, %K 3, %D 3).")
+    print("     - Average True Range (14-period ATR) for risk control.")
+    print("  2. Buy Trigger:")
+    print("     - Price touches or closes below Lower Bollinger Band (low <= BB_Lower).")
+    print("     - Stochastic RSI %K crosses above %D below 20 level (Oversold territory).")
+    print("     - Execute entry on next candle's open.")
+    print("  3. Stop Loss:")
+    print("     - Strict stop loss at 1.5 ATR below entry setup candle low.")
+    print("  4. Sell / Exit Signal:")
+    print("     - Price touches or crosses Middle Bollinger Band (20 SMA mean).")
+    print("     - OR Stochastic RSI %K crosses below %D above 80 level.")
+    print("     - OR Stop Loss hit.")
+    print("  5. Position Sizing:")
+    print("     - Risk exactly 1% of total portfolio capital per trade.")
+    print("-" * 80)
+
+    repo = MarketRepository()
+    strategy = BollingerStochRsi()
+
+    # 1. Single-Security Samples
+    sample_tickers = ["INFY.NS", "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS"]
+    print("\n[1] Single-Security Backtest Sample (INR 1,000,000 Capital, 1% Risk):")
+    sample_header = (
+        f"{'Ticker':<14} | {'Trades':<8} | {'Wins':<6} | {'Losses':<8} | "
+        f"{'Win Rate':<10} | {'Total PnL (INR)':<16}"
+    )
+    print(sample_header)
+    print("-" * len(sample_header))
+
+    engine = BacktestEngine(initial_capital=1_000_000.0)
+    for ticker in sample_tickers:
+        df = repo.get_daily_data(ticker)
+        if df.empty:
+            continue
+        signals_df = strategy.generate_signals(df)
+        res = engine.run(signals_df, ticker=ticker)
+        m = res["Metrics"]
+        pnl_str = f"INR {m['TotalPnL']:>11,.2f}"
+        print(
+            f"{ticker:<14} | {m['TotalTrades']:<8} | {m['Wins']:<6} | {m['Losses']:<8} | "
+            f"{m['WinRatePct']:<9.1f}% | {pnl_str}"
+        )
+    print("-" * len(sample_header))
+
+    # 2. Multi-Stock Portfolio Backtest across all stocks
+    print("\n[2] Multi-Stock Portfolio Backtest (All Active Stocks, 10% Capital Allocation):")
+    stocks_data = repo.get_all_stocks_daily_data()
+    print(f"Loaded daily price records for {len(stocks_data)} active stocks from database.")
+
+    signals_dict = {}
+    for ticker, df in stocks_data.items():
+        signals_dict[ticker] = strategy.generate_signals(df)
+
+    engine_portfolio = BacktestEngine(
+        initial_capital=1_000_000.0,
+        allocation_fraction=0.10,
+    )
+    portfolio_results = engine_portfolio.run_portfolio(signals_dict)
+
+    pm = portfolio_results["Metrics"]
+    trade_log = portfolio_results["TradeLog"]
+
+    print("\n[Portfolio Performance Metrics Summary]:")
+    print(f"  Total Trades   : {pm['TotalTrades']}")
+    print(f"  Winning Trades : {pm['Wins']}")
+    print(f"  Losing Trades  : {pm['Losses']}")
+    print(f"  Win Rate       : {pm['WinRatePct']:.1f} %")
+    print(f"  Total Net PnL  : INR {pm['TotalPnL']:,.2f}")
+    print(f"  Final Capital  : INR {pm['FinalCapital']:,.2f}")
+
+    if not trade_log.empty:
+        print("\n[Recent Trades Sample (Last 10)]:")
+        display_cols = [
+            "Security", "EntryDate", "ExitDate", "PositionSize",
+            "EntryPrice", "ExitPrice", "PnL", "ReturnPct", "Result", "ExitReason",
+        ]
+        sample_df = trade_log[display_cols].tail(10)
+        print(sample_df.to_string(index=False))
+
+
 def main() -> None:
     """Initialize and showcase the primary application functionality."""
     if (
+        "--bb-stoch-rsi" in sys.argv
+        or "--bollinger-stoch-rsi" in sys.argv
+        or "--mean-reversion" in sys.argv
+    ):
+        example_bollinger_stoch_rsi()
+    elif (
         "--rsi-pullback" in sys.argv
         or "--bull-pullback" in sys.argv
         or "--rsi-bull" in sys.argv

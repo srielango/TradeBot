@@ -2,6 +2,7 @@
 
 from strategies.adx_ema_swing import AdxEmaSwingStrategy
 from strategies.base_strategy import BaseStrategy
+from strategies.bollinger_stoch_rsi import BollingerStochRsi
 from strategies.bullish_kicker import BullishKicker
 from strategies.bullish_outside_bar import BullishOutsideBar
 from strategies.dual_moving_average_adx import DualMovingAverageAdx
@@ -21,12 +22,16 @@ STRATEGY_REGISTRY = {
     "RSI Pullback in Bull Trend (Daily, 200 SMA, RSI 40-70, 15d Max)": (
         RsiBullTrendPullback
     ),
+    "Mean Reversion Bollinger Bands + Stoch RSI (Daily, 20/2 BB, 14 Stoch RSI)": (
+        BollingerStochRsi
+    ),
 }
 
 __all__ = [
     "STRATEGY_REGISTRY",
     "AdxEmaSwingStrategy",
     "BaseStrategy",
+    "BollingerStochRsi",
     "BullishKicker",
     "BullishOutsideBar",
     "DualMovingAverageAdx",
