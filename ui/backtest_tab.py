@@ -283,7 +283,8 @@ class BacktestTab(QWidget):
 
         # Identify if selected strategy operates on daily OHLCV bars
         is_daily_strategy = any(
-            kw in strategy_name.lower() for kw in ["linda raschke", "holy grail", "daily"]
+            kw in strategy_name.lower()
+            for kw in ["linda raschke", "holy grail", "daily", "dual moving average"]
         )
 
         try:

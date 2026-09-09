@@ -169,6 +169,49 @@ class TradingApp(QMainWindow):
         self.ma_widget.setVisible(False)
         sidebar.addWidget(self.ma_widget)
 
+        # Multiple EMAs checkbox
+        self.multi_ema_check = QCheckBox('Multiple EMAs')
+        self.multi_ema_check.stateChanged.connect(self._on_multi_ema_toggled)
+        sidebar.addWidget(self.multi_ema_check)
+
+        # Multiple EMAs parameter widget (hidden by default)
+        self.multi_ema_widget = QWidget()
+        multi_ema_layout = QVBoxLayout(self.multi_ema_widget)
+        multi_ema_layout.setContentsMargins(12, 0, 0, 0)
+
+        # Standard preset checkboxes
+        self.ema_20_check = QCheckBox('EMA 20')
+        self.ema_20_check.setChecked(True)
+        self.ema_20_check.setStyleSheet("color: #FFD700; font-weight: bold;")
+        self.ema_20_check.stateChanged.connect(self.refresh_chart)
+        multi_ema_layout.addWidget(self.ema_20_check)
+
+        self.ema_50_check = QCheckBox('EMA 50')
+        self.ema_50_check.setChecked(True)
+        self.ema_50_check.setStyleSheet("color: #00E5FF; font-weight: bold;")
+        self.ema_50_check.stateChanged.connect(self.refresh_chart)
+        multi_ema_layout.addWidget(self.ema_50_check)
+
+        self.ema_100_check = QCheckBox('EMA 100')
+        self.ema_100_check.setStyleSheet("color: #E040FB; font-weight: bold;")
+        self.ema_100_check.stateChanged.connect(self.refresh_chart)
+        multi_ema_layout.addWidget(self.ema_100_check)
+
+        self.ema_200_check = QCheckBox('EMA 200')
+        self.ema_200_check.setStyleSheet("color: #FF6D00; font-weight: bold;")
+        self.ema_200_check.stateChanged.connect(self.refresh_chart)
+        multi_ema_layout.addWidget(self.ema_200_check)
+
+        # Custom EMAs text input
+        multi_ema_layout.addWidget(QLabel('Custom EMAs (e.g. 9, 21):'))
+        self.custom_ema_input = QLineEdit()
+        self.custom_ema_input.setPlaceholderText('e.g. 9, 21')
+        self.custom_ema_input.textChanged.connect(self.refresh_chart)
+        multi_ema_layout.addWidget(self.custom_ema_input)
+
+        self.multi_ema_widget.setVisible(False)
+        sidebar.addWidget(self.multi_ema_widget)
+
         # Relative Strength Index (RSI) checkbox
         self.rsi_check = QCheckBox('RSI')
         self.rsi_check.stateChanged.connect(self._on_rsi_toggled)
@@ -310,6 +353,11 @@ class TradingApp(QMainWindow):
         self.ma_widget.setVisible(self.ma_check.isChecked())
         self.refresh_chart()
 
+    def _on_multi_ema_toggled(self) -> None:
+        """Show/hide Multiple EMAs parameter panel based on checkbox state."""
+        self.multi_ema_widget.setVisible(self.multi_ema_check.isChecked())
+        self.refresh_chart()
+
     def _on_rsi_toggled(self) -> None:
         """Show/hide RSI parameter panel based on checkbox state."""
         self.rsi_widget.setVisible(self.rsi_check.isChecked())
@@ -433,6 +481,7 @@ class TradingApp(QMainWindow):
         # Determine which indicators are active
         stoch_active = self.stoch_check.isChecked()
         ma_active = self.ma_check.isChecked()
+        multi_ema_active = self.multi_ema_check.isChecked()
         rsi_active = self.rsi_check.isChecked()
         adx_active = self.adx_check.isChecked()
         beta_active = self.beta_check.isChecked()
@@ -579,6 +628,48 @@ class TradingApp(QMainWindow):
                 row=1,
                 col=1,
             )
+
+        # Subplot 1 overlay: Multiple EMAs
+        if multi_ema_active:
+            ema_configs: list[tuple[int, str, float]] = []
+            if self.ema_20_check.isChecked():
+                ema_configs.append((20, "#FFD700", 1.8))
+            if self.ema_50_check.isChecked():
+                ema_configs.append((50, "#00E5FF", 1.8))
+            if self.ema_100_check.isChecked():
+                ema_configs.append((100, "#E040FB", 1.5))
+            if self.ema_200_check.isChecked():
+                ema_configs.append((200, "#FF6D00", 1.5))
+
+            # Parse custom EMAs
+            custom_text = self.custom_ema_input.text().strip()
+            if custom_text:
+                custom_palette = ["#76FF03", "#FF4081", "#FFD600", "#18FFFF"]
+                for idx, token in enumerate(custom_text.split(",")):
+                    token_str = token.strip()
+                    if token_str.isdigit():
+                        period = int(token_str)
+                        if period >= 2 and period not in [p for p, _, _ in ema_configs]:
+                            color = custom_palette[idx % len(custom_palette)]
+                            ema_configs.append((period, color, 1.5))
+
+            # Plot each EMA line on Subplot 1
+            for period, color, width in ema_configs:
+                col_name = f"EMA_{period}"
+                df_full[col_name] = (
+                    df_full["close"].ewm(span=period, adjust=False).mean()
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=df_display["date"],
+                        y=df_full.loc[df_display.index, col_name],
+                        mode="lines",
+                        name=f"EMA {period}",
+                        line={"color": color, "width": width},
+                    ),
+                    row=1,
+                    col=1,
+                )
 
         # Subplot: Relative Strength Index (RSI)
         if rsi_active:
