@@ -12,6 +12,7 @@ from back_test_engine import BacktestEngine
 from fundamental_screener import FundamentalScreener
 from market_repository import MarketRepository
 from morning_scanner import MorningScanner
+from paper_trading_engine import PaperTradingEngine
 from rsi_indicator import analyze_rsi
 from strategies.adx_ema_swing import (
     AdxEmaBacktester,
@@ -904,9 +905,99 @@ def example_bollinger_stoch_rsi() -> None:
         print(sample_df.to_string(index=False))
 
 
+def example_paper_trading() -> None:
+    """Showcase Paper Trading Engine with 1% risk position sizing and live monitoring."""
+    print("=" * 80)
+    print("PAPER TRADING ENGINE - NIFTY 50 SWING TRADING SHOWCASE")
+    print("=" * 80)
+    print("Core Rules & Framework:")
+    print("  1. Virtual Starting Capital : INR 5,00,000.00 (SQLite 'paper_portfolio')")
+    print("  2. Risk per Trade           : Strictly 1% of INR 1,00,000 baseline = INR 1,000.00")
+    print("  3. Deployment Cap           : Maximum INR 1,00,000 per trade (or remaining cash)")
+    print("  4. Position Sizing Formula  : Quantity = Risk / (Entry - Stop Loss)")
+    print("  5. Real-time Monitoring     : Auto-exit when CMP <= Stop Loss or CMP >= Target")
+    print("-" * 80)
+
+    engine = PaperTradingEngine()
+    summary = engine.get_portfolio_summary()
+    print("\n[1] Portfolio State (Database: tradebot.db):")
+    print(f"  Available Cash Balance : INR {summary['cash_balance']:>12,.2f}")
+    print(f"  Open Positions Value   : INR {summary['open_positions_value']:>12,.2f}")
+    print(f"  Total Realized PnL     : INR {summary['total_realized_pnl']:>12,.2f}")
+    print(f"  Total Portfolio Worth  : INR {summary['total_portfolio_value']:>12,.2f}")
+
+    print("\n[2] Position Sizing Verification Test Cases:")
+    test_cases = [
+        {"desc": "Exact Specification Case", "entry": 280.0, "sl": 260.0, "target": 320.0},
+        {"desc": "Capital Cap Constraint", "entry": 50.0, "sl": 49.9, "target": 55.0},
+        {"desc": "Large Cap Stock (TCS)", "entry": 3200.0, "sl": 3100.0, "target": 3450.0},
+        {"desc": "Mid-Range Stock (Reliance)", "entry": 1280.0, "sl": 1250.0, "target": 1340.0},
+    ]
+
+    header = (
+        f"{'Scenario':<26} | {'Entry':<8} | {'SL':<8} | {'Target':<8} | "
+        f"{'Qty':<5} | {'Capital':<13} | {'Risk (INR)':<10} | {'Capped By':<14}"
+    )
+    print(header)
+    print("-" * len(header))
+
+    for tc in test_cases:
+        s = engine.calculate_position_size(tc["entry"], tc["sl"])
+        print(
+            f"{tc['desc']:<26} | {tc['entry']:<8.2f} | {tc['sl']:<8.2f} | "
+            f"{tc['target']:<8.2f} | {s['allowed_quantity']:<5} | "
+            f"INR {s['capital_required']:<9,.2f} | {s['actual_risk']:<10.2f} | {s['capped_by']:<14}"
+        )
+    print("-" * len(header))
+
+    print("\n[3] Live Market Quote Fetching via yfinance (Sample Nifty 50 Equities):")
+    sample_symbols = ["RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS"]
+    quotes = engine.fetch_live_quotes_batch(sample_symbols)
+    for sym in sample_symbols:
+        q = quotes.get(sym)
+        q_str = f"INR {q:,.2f}" if q else "Unavailable (Market Closed / Offline)"
+        print(f"  {sym:<14} -> Last Traded / Close: {q_str}")
+
+    print("\n[4] Active Open Positions Summary:")
+    open_trades = engine.get_open_trades()
+    if open_trades:
+        print(f"  {len(open_trades)} active open position(s) currently being monitored:")
+        for t in open_trades:
+            print(
+                f"  Trade #{t['trade_id']}: {t['quantity']} {t['ticker']} @ INR {t['entry_price']:,.2f} "
+                f"| CMP: INR {t['current_price']:,.2f} | SL: {t['stop_loss']:,.2f} | "
+                f"Unrealized PnL: INR {t['unrealized_pnl']:,.2f}"
+            )
+    else:
+        print("  No open positions currently in database.")
+
+    print("\n[5] Trade History Journal Sample (Last 5 Closed):")
+    history = engine.get_trade_history()
+    if history:
+        for t in history[:5]:
+            print(
+                f"  Trade #{t['trade_id']}: {t['ticker']} | Qty: {t['quantity']} | "
+                f"Entry: INR {t['entry_price']:,.2f} | Exit: INR {t['exit_price']:,.2f} | "
+                f"Realized PnL: INR {t['realized_pnl']:,.2f} ({t.get('exit_reason')})"
+            )
+    else:
+        print("  No closed trades recorded yet.")
+
+    print("\n[Paper Trading Dashboard Graphical UI]:")
+    print("  Launch desktop app using 'python main.py' to access the interactive")
+    print("  'Paper Trading' tab with real-time yfinance monitor and one-click order execution.")
+    print("=" * 80)
+
+
 def main() -> None:
     """Initialize and showcase the primary application functionality."""
     if (
+        "--paper-trading" in sys.argv
+        or "--paper" in sys.argv
+        or "--paper-engine" in sys.argv
+    ):
+        example_paper_trading()
+    elif (
         "--bb-stoch-rsi" in sys.argv
         or "--bollinger-stoch-rsi" in sys.argv
         or "--mean-reversion" in sys.argv

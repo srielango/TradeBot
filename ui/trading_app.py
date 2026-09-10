@@ -37,6 +37,7 @@ from stoch_rsi_indicator import calculate_stoch_rsi
 from ui.backtest_tab import BacktestTab
 from ui.fundamental_screener_tab import FundamentalScreenerTab
 from ui.morning_scanner_tab import MorningScannerTab
+from ui.paper_trading_tab import PaperTradingTab
 
 
 class TradingApp(QMainWindow):
@@ -420,6 +421,10 @@ class TradingApp(QMainWindow):
         self.scanner_tab.ticker_selected.connect(self.on_scanner_ticker_selected)
         self.tabs.addTab(self.scanner_tab, 'Morning Scanner')
 
+        # Paper Trading Dashboard Tab
+        self.paper_trading_tab = PaperTradingTab(self.repo)
+        self.tabs.addTab(self.paper_trading_tab, 'Paper Trading')
+
         # Trade Execution Journal Tab
         self.journal_tab = QTableWidget(5, 5)
         self.journal_tab.setHorizontalHeaderLabels([
@@ -541,7 +546,7 @@ class TradingApp(QMainWindow):
                 break
         self.tabs.setCurrentWidget(self.chart_tab)
 
-    def refresh_chart(self):  # noqa: C901
+    def refresh_chart(self):
         """Update and re-render Plotly chart with candlesticks, volume, and indicators.
 
         Subplot layout adapts dynamically:
@@ -874,7 +879,7 @@ class TradingApp(QMainWindow):
                 col=1,
             )
 
-            rsi_ticks = sorted(list({0, 20, os_level, 40, 50, 60, ob_level, 80, 100}))
+            rsi_ticks = sorted({0, 20, os_level, 40, 50, 60, ob_level, 80, 100})
             fig.update_yaxes(
                 title_text="RSI",
                 row=rsi_row,
@@ -1033,7 +1038,7 @@ class TradingApp(QMainWindow):
                 annotation_position='right',
             )
 
-            adx_ticks = sorted(list({0, 20, trend_threshold, 40, 60, 80}))
+            adx_ticks = sorted({0, 20, trend_threshold, 40, 60, 80})
             fig.update_yaxes(
                 title_text="ADX",
                 row=adx_row,
@@ -1208,3 +1213,10 @@ class TradingApp(QMainWindow):
                 'Empty Watchlist',
                 'Connected to tradebot.db, but the "securities" table contains zero rows.',
             )
+
+    def closeEvent(self, event) -> None:
+        """Clean up background workers and threads on application exit."""
+        if hasattr(self, 'paper_trading_tab') and self.paper_trading_tab.worker:
+            self.paper_trading_tab.worker.stop()
+            self.paper_trading_tab.worker.wait(1500)
+        super().closeEvent(event)
