@@ -423,8 +423,7 @@ def process_fundamentals_downloads(force_refresh: bool = False) -> None:
         try:
             print(f"[{idx}/{len(stock_list)}] Analyzing fundamentals for {ticker}...")
             metrics = screener.analyze_ticker(ticker, force_refresh=force_refresh)
-            status_text = "PASS" if metrics.is_passing else "FAIL"
-            print(f"    -> Status: {status_text} | MCap: {metrics.market_cap_cr} Cr")
+            print(f"    -> Fundamentals synced | MCap: {metrics.market_cap_cr} Cr")
             time.sleep(0.3)
         except (sqlite3.Error, OSError, ValueError, KeyError) as err:
             print(f"    -> Failed analyzing {ticker}: {err}")

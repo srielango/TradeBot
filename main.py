@@ -441,7 +441,7 @@ def example_adx_indicator() -> None:
 
 def example_morning_scanner(
     lookback_months: int = 6,
-    trigger_scope: str = "last_bar",
+    trigger_scope: str = "previous_day",
 ) -> None:
     """Showcase TradeBot Morning Scanner for pre-market buy signal detection on previous close.
 
@@ -1031,9 +1031,9 @@ def main() -> None:
         example_adx_indicator()
     elif "--scanner" in sys.argv or "--morning-scanner" in sys.argv:
         scope = (
-            "previous_day"
-            if ("--session" in sys.argv or "--full-day" in sys.argv)
-            else "last_bar"
+            "last_bar"
+            if "--last-bar" in sys.argv
+            else "previous_day"
         )
         example_morning_scanner(trigger_scope=scope)
     else:

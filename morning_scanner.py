@@ -28,7 +28,7 @@ class MorningScanner:
     def scan(
         self,
         lookback_months: int = 6,
-        trigger_scope: str = "last_bar",
+        trigger_scope: str = "previous_day",
     ) -> list[dict]:
         """Execute scan across all active equity stocks using historical lookback.
 
@@ -42,9 +42,9 @@ class MorningScanner:
                 feed into strategy calculations (3 to 6 months recommended).
                 Defaults to 6.
             trigger_scope (str): Scope of the trigger check:
-                - "last_bar": Strictly on the final completed bar (previous close candle).
                 - "previous_day": On any bar of the previous completed trading day's session.
-                Defaults to "last_bar".
+                - "last_bar": Strictly on the final completed bar (previous close candle).
+                Defaults to "previous_day".
 
         Returns:
             list[dict]: List of scan result dictionaries for all evaluated stocks,

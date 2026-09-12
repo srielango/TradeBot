@@ -1,14 +1,14 @@
 """Interactive Fundamental Screener tab component for TradeBot dashboard."""
 
 import sqlite3
-from typing import Any, Optional
+from typing import Any
 
 # pylint: disable=no-name-in-module
 # PyQt6 modules are compiled C/C++ extensions (.pyd), which static analyzers
 # like Pylint cannot inspect without dynamic loading.
 import pandas as pd
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
@@ -81,7 +81,7 @@ class FundamentalScreenerTab(QWidget):
         super().__init__()
         self.repo = repo
         self.screener = FundamentalScreener(self.repo.db_path)
-        self.sync_worker: Optional[FundamentalSyncWorker] = None
+        self.sync_worker: FundamentalSyncWorker | None = None
         self.all_securities: list[dict[str, Any]] = []
         self.current_rows_data: list[dict[str, Any]] = []
 
@@ -294,7 +294,7 @@ class FundamentalScreenerTab(QWidget):
         # Section 3: Stock Results Table
         # =====================================================================
         self.table = QTableWidget()
-        self.table.setColumnCount(10)
+        self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels([
             "Ticker",
             "Company Name",
@@ -305,7 +305,6 @@ class FundamentalScreenerTab(QWidget):
             "252d Avg Volume",
             "Inst Own %",
             "ROE %",
-            "Status",
         ])
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -454,7 +453,6 @@ class FundamentalScreenerTab(QWidget):
         for row_idx, item in enumerate(rows_data):
             s = item["sec"]
             checks = item["checks"]
-            is_pass = item["is_pass"]
 
             mcap_str = f"₹ {s['market_cap_cr']:,.0f}" if s['market_cap_cr'] else "N/A"
             de_str = f"{s['debt_to_equity']:.2f}" if s['debt_to_equity'] is not None else "N/A"
@@ -467,7 +465,6 @@ class FundamentalScreenerTab(QWidget):
                 else "N/A"
             )
             roe_str = f"{s['roe'] * 100:.1f}%" if s['roe'] is not None else "N/A"
-            status_str = "PASS" if is_pass else "FAIL"
 
             items = [
                 QTableWidgetItem(s["ticker"]),
@@ -479,7 +476,6 @@ class FundamentalScreenerTab(QWidget):
                 QTableWidgetItem(vol_str),
                 QTableWidgetItem(inst_str),
                 QTableWidgetItem(roe_str),
-                QTableWidgetItem(status_str),
             ]
 
             # Style alignment and colors
@@ -516,17 +512,9 @@ class FundamentalScreenerTab(QWidget):
                     widget_item.setForeground(
                         QColor(76, 175, 80) if checks["inst"] else QColor(244, 67, 54)
                     )
-                elif col_idx == 8:  # ROE
-                    if s["roe"] is not None:
-                        widget_item.setForeground(
-                            QColor(76, 175, 80) if checks["roe"] else QColor(244, 67, 54)
-                        )
-                elif col_idx == 9:  # Status badge
-                    font = QFont()
-                    font.setBold(True)
-                    widget_item.setFont(font)
+                elif col_idx == 8 and s["roe"] is not None:  # ROE
                     widget_item.setForeground(
-                        QColor(76, 175, 80) if is_pass else QColor(244, 67, 54)
+                        QColor(76, 175, 80) if checks["roe"] else QColor(244, 67, 54)
                     )
 
                 self.table.setItem(row_idx, col_idx, widget_item)
@@ -608,7 +596,6 @@ class FundamentalScreenerTab(QWidget):
         records = []
         for item in self.current_rows_data:
             s = item["sec"]
-            is_pass = item["is_pass"]
             records.append({
                 "Ticker": s["ticker"],
                 "Company Name": s["name"],
@@ -623,7 +610,6 @@ class FundamentalScreenerTab(QWidget):
                     else None
                 ),
                 "ROE (%)": s["roe"] * 100 if s["roe"] is not None else None,
-                "Status": "PASS" if is_pass else "FAIL",
             })
         return pd.DataFrame(records)
 

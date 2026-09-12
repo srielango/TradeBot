@@ -41,7 +41,7 @@ class ScannerWorker(QThread):
         self,
         scanner: MorningScanner,
         lookback_months: int = 6,
-        trigger_scope: str = "last_bar",
+        trigger_scope: str = "previous_day",
     ):
         """Initialize worker with scanner instance and parameters."""
         super().__init__()
@@ -113,7 +113,6 @@ class MorningScannerTab(QWidget):
         # Trigger Scope Selector
         control_layout.addWidget(QLabel("<b>Trigger Scope:</b>"), 0, 2)
         self.trigger_scope_combo = QComboBox()
-        self.trigger_scope_combo.addItem("Previous Close Bar (Strict 15:15)", "last_bar")
         self.trigger_scope_combo.addItem("Previous Trading Day (Full Session)", "previous_day")
         self.trigger_scope_combo.setSizeAdjustPolicy(
             QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
@@ -300,7 +299,7 @@ class MorningScannerTab(QWidget):
             return
 
         lookback = self.lookback_combo.currentData() or 6
-        trigger_scope = self.trigger_scope_combo.currentData() or "last_bar"
+        trigger_scope = self.trigger_scope_combo.currentData() or "previous_day"
         self.btn_run_scan.setEnabled(False)
         self.btn_run_scan.setText("Scanning Database...")
         self.progress_bar.setVisible(True)

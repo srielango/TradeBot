@@ -155,9 +155,8 @@ def update_daily_fundamentals(limit: int | None = None) -> None:
 
     for idx, ticker in enumerate(tickers, start=1):
         try:
-            metrics = screener.analyze_ticker(ticker, force_refresh=True)
-            status_text = "PASS" if metrics.is_passing else "FAIL"
-            print(f"[{idx}/{len(tickers)}] {ticker:<12} -> Fundamentals synced ({status_text})")
+            screener.analyze_ticker(ticker, force_refresh=True)
+            print(f"[{idx}/{len(tickers)}] {ticker:<12} -> Fundamentals synced")
             time.sleep(0.3)
         except (sqlite3.Error, OSError, ValueError, KeyError) as err:
             print(f"Failed updating fundamentals for {ticker}: {err}")

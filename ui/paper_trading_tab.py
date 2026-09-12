@@ -293,7 +293,10 @@ class PaperTradingTab(QWidget):
 
         # 4. Optional Sell Target
         target_header_layout = QHBoxLayout()
-        self.chk_target = QCheckBox("<b>Sell Target (₹) [Optional]:</b>")
+        self.chk_target = QCheckBox("Sell Target (₹) [Optional]:")
+        chk_target_font = self.chk_target.font()
+        chk_target_font.setBold(True)
+        self.chk_target.setFont(chk_target_font)
         self.chk_target.setChecked(True)
         self.chk_target.toggled.connect(self._on_target_toggled)
         target_header_layout.addWidget(self.chk_target)
