@@ -24,6 +24,7 @@ from strategies.bullish_kicker import BullishKicker
 from strategies.bullish_outside_bar import BullishOutsideBar
 from strategies.dual_moving_average_adx import DualMovingAverageAdx
 from strategies.moving_average_stochastic import MovingAverageStochastic
+from strategies.nifty_dual_momentum_breakout import NiftyDualMomentumBreakout
 from strategies.rsi_bull_trend_pullback import RsiBullTrendPullback
 from ui import TradingApp
 
@@ -1034,6 +1035,122 @@ def example_paper_trading() -> None:
     print("=" * 80)
 
 
+def example_nifty_dual_momentum_breakout() -> None:
+    """Showcase Nifty Dual Momentum Breakout strategy for hourly Nifty 50 cash stocks.
+
+    Demonstrates:
+    1. Strategy checklist rules and technical filters (200 EMA, 20D High, 1.5x Volume MA).
+    2. Framework standard on_candle_close output format returning an explicit dictionary:
+       {'symbol', 'signal' (BUY/HOLD), 'entry_price', 'stop_loss', 'take_profit'}.
+    3. Hourly execution with 3.5% initial Stop Loss, 7.0% Take Profit (1:2 RRR),
+       and 1:1 RRR breakeven trailing stop (+3.5% gain triggers stop move to entry).
+    4. Backtest simulation metrics and trade log displaying breakeven vs target exits.
+    """
+    print("=" * 85)
+    print("NIFTY DUAL MOMENTUM BREAKOUT STRATEGY SHOWCASE (HOURLY CASH EQUITIES)")
+    print("=" * 85)
+    print("Strategy Checklist Rules:")
+    print("  1. Long-Only Momentum Breakout (Cash Segment Only, No Short, No Leverage):")
+    print("     - Nifty 50 universe evaluated on the HOURLY timeframe.")
+    print("  2. Technical Filters (Daily Equivalent using Hourly Data):")
+    print("     - Trend Filter: Close > 200 EMA (200 * 7 = 1,400 hourly periods EMA).")
+    print("     - Breakout Trigger: Current hour's close > highest high of last 20 trading days")
+    print("       (20 days * 7 trading hours = 140 hourly periods).")
+    print("     - Volume Confirmation: Breakout hour volume > 1.5x 20-period Volume Moving Average")
+    print("       (140 hourly periods).")
+    print("  3. Execution & Risk Management:")
+    print("     - Entry: Market order on close of confirming hourly breakout candle.")
+    print("     - Stop Loss: Placed strictly 3.5% below entry price.")
+    print("     - Take Profit: 1:2 Risk-to-Reward Ratio (7.0% target profit from entry).")
+    print("     - Trailing Stop: When price reaches +3.5% (1:1 RRR), move Stop Loss to exact")
+    print("       entry price (breakeven), locking out downside risk.")
+    print("-" * 85)
+
+    repo = MarketRepository()
+    strategy = NiftyDualMomentumBreakout()
+
+    sample_tickers = ["RELIANCE.NS", "TCS.NS", "INFY.NS", "ICICIBANK.NS", "BHARTIARTL.NS"]
+
+    # Section 1: Standard on_candle_close dictionary output
+    print("\n[1] Framework Standard on_candle_close Signal Evaluation (Latest Hourly Candle):")
+    signal_header = (
+        f"{'Ticker':<14} | {'Signal':<6} | {'Entry Price':<14} | "
+        f"{'Stop Loss':<14} | {'Take Profit':<14} | {'Condition / Status'}"
+    )
+    print(signal_header)
+    print("-" * len(signal_header))
+
+    for ticker in sample_tickers:
+        df = repo.get_data(ticker)
+        if df.empty:
+            continue
+
+        result_dict = strategy.on_candle_close(symbol=ticker, candle_or_df=df)
+        sym = result_dict["symbol"]
+        sig = result_dict["signal"]
+        ep = result_dict["entry_price"]
+        sl = result_dict["stop_loss"]
+        tp = result_dict["take_profit"]
+
+        ep_str = f"INR {ep:,.2f}" if ep is not None else "N/A (Holding)"
+        sl_str = f"INR {sl:,.2f}" if sl is not None else "N/A"
+        tp_str = f"INR {tp:,.2f}" if tp is not None else "N/A"
+
+        if sig == "BUY":
+            status = "CONFIRMED BREAKOUT [BUY TRIGGER]"
+        else:
+            status = "Consolidating / Waiting for Breakout"
+
+        print(
+            f"{sym:<14} | {sig:<6} | {ep_str:<14} | "
+            f"{sl_str:<14} | {tp_str:<14} | {status}"
+        )
+    print("-" * len(signal_header))
+
+    # Section 2: Hourly Backtest simulation across sample securities
+    print("\n[2] Hourly Historical Backtest Sample (INR 1,000,000 Capital, 10% Allocation):")
+    btest_header = (
+        f"{'Ticker':<14} | {'Trades':<8} | {'Wins':<6} | {'Losses':<8} | "
+        f"{'Breakeven':<10} | {'Win Rate':<10} | {'Total PnL (INR)':<16} | {'Profit Factor'}"
+    )
+    print(btest_header)
+    print("-" * len(btest_header))
+
+    for ticker in sample_tickers:
+        df = repo.get_data(ticker)
+        if df.empty:
+            continue
+
+        btest_res = strategy.backtest(df, ticker=ticker, initial_capital=1_000_000.0)
+        m = btest_res["Metrics"]
+        pnl_str = f"INR {m['TotalPnL']:>11,.2f}"
+        pf_str = f"{m['ProfitFactor']:.2f}" if m['ProfitFactor'] != float("inf") else "inf"
+
+        print(
+            f"{ticker:<14} | {m['TotalTrades']:<8} | {m['Wins']:<6} | {m['Losses']:<8} | "
+            f"{m['Breakevens']:<10} | {m['WinRatePct']:<9.1f}% | {pnl_str} | {pf_str}"
+        )
+    print("-" * len(btest_header))
+
+    # Section 3: Trade Journal Sample demonstrating 1:1 RRR Breakeven Trailing Stop
+    sample_ticker = "RELIANCE.NS"
+    sample_df = repo.get_data(sample_ticker)
+    if not sample_df.empty:
+        sample_res = strategy.backtest(
+            sample_df, ticker=sample_ticker, initial_capital=1_000_000.0
+        )
+        trade_log = sample_res["TradeLog"]
+        if not trade_log.empty:
+            print(f"\n[3] Trade Journal Sample ({sample_ticker} - Hourly Execution & Trailing):")
+            display_cols = [
+                "EntryDate", "ExitDate", "PositionSize", "EntryPrice",
+                "ExitPrice", "PnL", "ReturnPct", "Result", "ExitReason",
+            ]
+            print(trade_log[display_cols].tail(8).to_string(index=False))
+
+    print("\n" + "=" * 85)
+
+
 def example_entry_stop_loss() -> None:
     """Showcase and validate entry-based stop loss calculation across all strategies."""
     print("=" * 80)
@@ -1045,6 +1162,13 @@ def example_entry_stop_loss() -> None:
 def main() -> None:
     """Initialize and showcase the primary application functionality."""
     if (
+        "--momentum" in sys.argv
+        or "--nifty-momentum" in sys.argv
+        or "--dual-momentum" in sys.argv
+        or "--breakout" in sys.argv
+    ):
+        example_nifty_dual_momentum_breakout()
+    elif (
         "--entry-sl" in sys.argv
         or "--entry-stop-loss" in sys.argv
         or "--verify-stops" in sys.argv

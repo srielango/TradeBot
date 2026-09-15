@@ -7,6 +7,7 @@ from strategies.bullish_kicker import BullishKicker
 from strategies.bullish_outside_bar import BullishOutsideBar
 from strategies.dual_moving_average_adx import DualMovingAverageAdx
 from strategies.moving_average_stochastic import MovingAverageStochastic
+from strategies.nifty_dual_momentum_breakout import NiftyDualMomentumBreakout
 from strategies.rsi_bull_trend_pullback import RsiBullTrendPullback
 
 STRATEGY_REGISTRY = {
@@ -23,6 +24,9 @@ STRATEGY_REGISTRY = {
     "Mean Reversion Bollinger Bands + Stoch RSI (Daily, 20/2 BB, 14 Stoch RSI)": (
         BollingerStochRsi
     ),
+    "Nifty Dual Momentum Breakout (Hourly, 200 EMA, 20D High, 1:2 RRR)": (
+        NiftyDualMomentumBreakout
+    ),
 }
 
 __all__ = [
@@ -34,5 +38,6 @@ __all__ = [
     "BullishOutsideBar",
     "DualMovingAverageAdx",
     "MovingAverageStochastic",
+    "NiftyDualMomentumBreakout",
     "RsiBullTrendPullback",
 ]
