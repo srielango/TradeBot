@@ -6,15 +6,13 @@ from strategies.bollinger_stoch_rsi import BollingerStochRsi
 from strategies.bullish_kicker import BullishKicker
 from strategies.bullish_outside_bar import BullishOutsideBar
 from strategies.dual_moving_average_adx import DualMovingAverageAdx
-from strategies.macd_rsi_swing import MacdRsiSwing
 from strategies.moving_average_stochastic import MovingAverageStochastic
 from strategies.rsi_bull_trend_pullback import RsiBullTrendPullback
 
 STRATEGY_REGISTRY = {
-    "Moving Average + Stochastic (200 MA, 8,3,3, 15% Target)": MovingAverageStochastic,
-    "MACD RSI Swing (12, 26, 9)": MacdRsiSwing,
-    "Bullish Kicker Pattern (Daily, 9% Target)": BullishKicker,
-    "Bullish Outside Bar (Weekly, 10% Target)": BullishOutsideBar,
+    "Moving Average + Stochastic (200 MA, 8,3,3, 10% Target)": MovingAverageStochastic,
+    "Bullish Kicker Pattern (Daily, 10% Target)": BullishKicker,
+    "Bullish Outside Bar (Daily, 20% Target, 2-3 Weeks)": BullishOutsideBar,
     "Linda Raschke ADX + 20 EMA Swing (The Holy Grail)": AdxEmaSwingStrategy,
     "Dual Moving Average & Volatility Filter (Daily, 20/50 EMA, ADX > 20)": (
         DualMovingAverageAdx
@@ -35,7 +33,6 @@ __all__ = [
     "BullishKicker",
     "BullishOutsideBar",
     "DualMovingAverageAdx",
-    "MacdRsiSwing",
     "MovingAverageStochastic",
     "RsiBullTrendPullback",
 ]

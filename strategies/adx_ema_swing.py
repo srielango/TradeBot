@@ -285,6 +285,9 @@ class AdxEmaSwingStrategy(BaseStrategy):
         highs = df['high'].values
         lows = df['low'].values
         opens = df['open'].values
+        closes = df['close'].values
+        emas = df['EMA20'].values
+        adxs = df['ADX'].values
         swing_lows = df['SwingLow'].values
         swing_highs = df['SwingHigh'].values
         setup_long = df['Setup_Long'].values
@@ -297,7 +300,51 @@ class AdxEmaSwingStrategy(BaseStrategy):
 
         risk_amount = capital * risk_per_trade
 
+        in_pos = 0
+        entry_bar = -1
+        current_sl = 0.0
+        current_tp = 0.0
+
         for i in range(1, n):
+            # Check exit conditions if currently in an active position
+            if in_pos == 1:
+                stopped_out = current_sl > 0 and lows[i] <= current_sl
+                tp_hit = current_tp > 0 and highs[i] >= current_tp
+                if stopped_out or tp_hit:
+                    in_pos = 0
+                    entry_bar = -1
+                    continue
+                elif i > entry_bar:
+                    adx_curr = adxs[i] if pd.notna(adxs[i]) else 0.0
+                    adx_prev = adxs[i - 1] if pd.notna(adxs[i - 1]) else adx_curr
+                    adx_weakness = (adx_curr < self.adx_threshold) or (adx_curr <= adx_prev)
+                    ema_break = pd.notna(emas[i]) and closes[i] < emas[i]
+
+                    if adx_weakness or ema_break:
+                        signals[i] = -1
+                        in_pos = 0
+                        entry_bar = -1
+                        continue
+
+            elif in_pos == -1:
+                stopped_out = current_sl > 0 and highs[i] >= current_sl
+                tp_hit = current_tp > 0 and lows[i] <= current_tp
+                if stopped_out or tp_hit:
+                    in_pos = 0
+                    entry_bar = -1
+                    continue
+                elif i > entry_bar:
+                    adx_curr = adxs[i] if pd.notna(adxs[i]) else 0.0
+                    adx_prev = adxs[i - 1] if pd.notna(adxs[i - 1]) else adx_curr
+                    adx_weakness = (adx_curr < self.adx_threshold) or (adx_curr <= adx_prev)
+                    ema_break = pd.notna(emas[i]) and closes[i] > emas[i]
+
+                    if adx_weakness or ema_break:
+                        signals[i] = 1
+                        in_pos = 0
+                        entry_bar = -1
+                        continue
+
             # Check for Long breakout trigger from preceding setup bars
             triggered_long = False
             for lookback in range(1, self.max_breakout_bars + 1):
@@ -320,6 +367,10 @@ class AdxEmaSwingStrategy(BaseStrategy):
                             stop_losses[i] = round(stop_loss, 2)
                             take_profits[i] = round(target, 2)
                             position_sizes[i] = pos_size
+                            in_pos = 1
+                            entry_bar = i
+                            current_sl = stop_loss
+                            current_tp = target
                             triggered_long = True
                             break
 
@@ -347,6 +398,10 @@ class AdxEmaSwingStrategy(BaseStrategy):
                             stop_losses[i] = round(stop_loss, 2)
                             take_profits[i] = round(target, 2)
                             position_sizes[i] = pos_size
+                            in_pos = -1
+                            entry_bar = i
+                            current_sl = stop_loss
+                            current_tp = target
                             break
 
         df['Signal'] = signals
@@ -491,9 +546,20 @@ class AdxEmaBacktester:
                         exited = True
                     # EOD Exit Conditions (evaluated on holding days after entry)
                     elif date_str > open_pos["EntryDate"]:
-                        if bar_adx < self.strategy.adx_threshold:
+                        adx_curr = bar_adx
+                        adx_prev = (
+                            float(adxs[i - 1])
+                            if i > 0 and pd.notna(adxs[i - 1])
+                            else adx_curr
+                        )
+                        adx_weakness = (
+                            adx_curr < self.strategy.adx_threshold
+                            or adx_curr <= adx_prev
+                        )
+
+                        if adx_weakness:
                             exit_price = bar_close
-                            exit_reason = "ADX < 30"
+                            exit_reason = "ADX < 30 / Flattening"
                             exited = True
                         elif bar_close < bar_ema:
                             exit_price = bar_close
@@ -538,9 +604,20 @@ class AdxEmaBacktester:
                         exited = True
                     # EOD Exit Conditions (evaluated on holding days after entry)
                     elif date_str > open_pos["EntryDate"]:
-                        if bar_adx < self.strategy.adx_threshold:
+                        adx_curr = bar_adx
+                        adx_prev = (
+                            float(adxs[i - 1])
+                            if i > 0 and pd.notna(adxs[i - 1])
+                            else adx_curr
+                        )
+                        adx_weakness = (
+                            adx_curr < self.strategy.adx_threshold
+                            or adx_curr <= adx_prev
+                        )
+
+                        if adx_weakness:
                             exit_price = bar_close
-                            exit_reason = "ADX < 30"
+                            exit_reason = "ADX < 30 / Flattening"
                             exited = True
                         elif bar_close > bar_ema:
                             exit_price = bar_close
@@ -584,7 +661,15 @@ class AdxEmaBacktester:
 
                     if sig == 1:  # Long Signal
                         entry_price = bar_close
-                        initial_r = entry_price - sl
+                        # Calculate stop loss on entering position, based on entry price
+                        if sl is not None and 0 < sl < entry_price:
+                            effective_sl = sl
+                        else:
+                            effective_sl = round(entry_price * 0.95, 2)
+
+                        initial_r = entry_price - effective_sl
+                        effective_tp = entry_price + (2.0 * initial_r)
+
                         if initial_r > 0:
                             # 1% risk position sizing
                             raw_size = int(risk_amount / initial_r)
@@ -598,15 +683,23 @@ class AdxEmaBacktester:
                                     "Type": "LONG",
                                     "EntryDate": date_str,
                                     "EntryPrice": entry_price,
-                                    "StopLoss": sl,
-                                    "TakeProfit": tp,
+                                    "StopLoss": effective_sl,
+                                    "TakeProfit": effective_tp,
                                     "Size": pos_size,
                                     "InitialR": initial_r,
                                 }
 
                     elif sig == -1 and self.strategy.allow_short:  # Short Signal
                         entry_price = bar_close
-                        initial_r = sl - entry_price
+                        # Calculate stop loss on entering position, based on entry price
+                        if sl is not None and sl > entry_price:
+                            effective_sl = sl
+                        else:
+                            effective_sl = round(entry_price * 1.05, 2)
+
+                        initial_r = effective_sl - entry_price
+                        effective_tp = entry_price - (2.0 * initial_r)
+
                         if initial_r > 0:
                             raw_size = int(risk_amount / initial_r)
                             max_size = int((cash * self.max_capital_allocation) / entry_price)
@@ -618,8 +711,8 @@ class AdxEmaBacktester:
                                     "Type": "SHORT",
                                     "EntryDate": date_str,
                                     "EntryPrice": entry_price,
-                                    "StopLoss": sl,
-                                    "TakeProfit": tp,
+                                    "StopLoss": effective_sl,
+                                    "TakeProfit": effective_tp,
                                     "Size": pos_size,
                                     "InitialR": initial_r,
                                 }

@@ -1,55 +1,30 @@
 """Bullish Kicker Candlestick Pattern strategy implementation.
 
 ### 1. Spotting the Setup
-
-- Look for a **strong candle** in the current trend (bullish or bearish).
-    
-- Next day: price **opens at the opposite extreme** (gap open) and moves sharply in the reverse direction.
-    
-- Confirm the second candle is **large and decisive** (not a doji or weak bar).
-    
+- Look for a strong candle in the current trend (bullish or bearish).
+- Next day: price opens at the opposite extreme (gap open) and moves sharply in the reverse.
+- Confirm the second candle is large and decisive (not a doji or weak bar).
 
 ### 2. Validating Strength
-
-- Ensure the reversal candle has **high volume** and wide range.
-    
-- Check for **news events or catalysts** (earnings, policy, global events).
-    
-- Compare with **sister stocks/sector peers** for confirmation.
-    
+- Ensure the reversal candle has high volume and wide range.
+- Check for news events or catalysts (earnings, policy, global events).
+- Compare with sister stocks/sector peers for confirmation.
 
 ### 3. Entry Rules
-
-- Enter **near the close of the second candle**.
-    
-- Avoid chasing mid‑candle; wait for confirmation of strength.
-    
+- Enter near the close of the second candle.
+- Avoid chasing mid-candle; wait for confirmation of strength.
 
 ### 4. Stop Loss Placement
-
-- Bullish kicker: stop below the **low of the first candle**.
-    
-- Bearish kicker: stop above the **high of the first candle**.
-    
+- Bullish kicker: stop below the low of the first candle.
+- Bearish kicker: stop above the high of the first candle.
 
 ### 5. Target & Risk Management
-
-- Conservative target: **8–10%**.
-    
-- Aggressive target: **15–20%** if momentum is strong.
-    
-- Position size: risk only **1% of total capital** per trade.
-    
+- Target: 10% profit target.
+- Position size: risk only 1% of total capital per trade.
 
 ### 6. Timeframe & Discipline
-
-- Use **daily charts** (not intraday).
-    
-- Expect **2:1 to 4:1 risk‑reward**.
-    
-- Trade only when setup is **clear and strong**—skip weak signals.
-    
-**Pro tip:** Keep a watchlist of high‑beta, liquid stocks (F&O segment) and scan daily for kicker setups after major news events.
+- Use daily charts (not intraday).
+- Trade only when setup is clear and strong—skip weak signals.
 """
 
 import pandas as pd
@@ -63,7 +38,7 @@ class BullishKicker(BaseStrategy):
 
     def __init__(
         self,
-        target_profit_pct: float = 0.09,
+        target_profit_pct: float = 0.10,
         min_body_ratio: float = 0.40,
         volume_factor: float = 1.0,
     ):
@@ -71,7 +46,7 @@ class BullishKicker(BaseStrategy):
 
         Args:
             target_profit_pct (float): Profit target percentage from entry price
-                (default 0.09 / 9%).
+                (default 0.10 / 10%).
             min_body_ratio (float): Minimum ratio of candle body to high-low range (default 0.40).
             volume_factor (float): Minimum volume multiplier relative to 20-day SMA (default 1.0).
         """
@@ -102,7 +77,7 @@ class BullishKicker(BaseStrategy):
             3. Stop Loss:
                - Set at the low of Candle 1 (Day t-1 low).
             4. Profit Target:
-               - Set at 9% above the estimated entry price.
+               - Set at 10% above the estimated entry price.
             5. Risk & Position Sizing:
                - Risk 1% of total portfolio capital per trade.
 
@@ -169,6 +144,7 @@ class BullishKicker(BaseStrategy):
 
         df['StopLoss'] = None
         df['TakeProfit'] = None
+        df['TakeProfitPct'] = self.target_profit_pct
         df['PositionSize'] = 0
 
         risk_amount = capital * risk_per_trade

@@ -31,6 +31,7 @@ Checklist Rules
    - Risk no more than 1% of portfolio capital per trade.
 """
 
+import numpy as np
 import pandas as pd
 
 from config import DEFAULT_INITIAL_CAPITAL, DEFAULT_RISK_PER_TRADE
@@ -52,7 +53,8 @@ class BullishOutsideBar(BaseStrategy):
         min_body_ratio: float = 0.40,
         close_near_high_ratio: float = 0.60,
         volume_factor: float = 1.0,
-        target_profit_pct: float = 0.10,
+        target_profit_pct: float = 0.20,
+        max_holding_days: int = 15,
     ):
         """Initialize Bullish Outside Bar strategy parameters.
 
@@ -71,6 +73,8 @@ class BullishOutsideBar(BaseStrategy):
                 volume SMA for the reversal candle (default 1.0).
             target_profit_pct (float): Profit target percentage above entry price
                 (default 0.20 = 20%).
+            max_holding_days (int): Maximum holding period in trading days
+                (default 15 = 2 to 3 weeks).
         """
         self.prior_trend_pct = prior_trend_pct
         self.trend_lookback = trend_lookback
@@ -78,6 +82,7 @@ class BullishOutsideBar(BaseStrategy):
         self.close_near_high_ratio = close_near_high_ratio
         self.volume_factor = volume_factor
         self.target_profit_pct = target_profit_pct
+        self.max_holding_days = max_holding_days
 
     @property
     def name(self) -> str:
@@ -189,19 +194,60 @@ class BullishOutsideBar(BaseStrategy):
             & volume_confirmed
         )
 
-        # --- Signal column (1 = buy, 0 = no action) ---
-        df['Signal'] = 0
-        df.loc[buy_condition, 'Signal'] = 1
+        # --- Signal Generation & Sequential Holding Tracking ---
+        # Outside Bar targets 20% within 2 to 3 weeks (max_holding_days = 15 bars)
+        n = len(df)
+        signals = np.zeros(n, dtype=int)
+        closes = df['close'].values
+        highs = df['high'].values
+        lows = df['low'].values
+        opens = df['open'].values
+
+        in_position = False
+        entry_idx = -1
+        current_stop_loss = 0.0
+        current_take_profit = 0.0
+
+        for i in range(n):
+            if in_position:
+                days_held = i - entry_idx
+                bar_low = lows[i]
+                bar_high = highs[i]
+
+                # Condition A: Intraday Stop Loss hit
+                stopped_out = current_stop_loss > 0 and bar_low <= current_stop_loss
+                # Condition B: Intraday 20%+ Profit Target achieved
+                profit_target_hit = current_take_profit > 0 and bar_high >= current_take_profit
+                # Condition C: Maximum holding period reached (2 to 3 weeks / 15 trading days)
+                time_exit = days_held >= self.max_holding_days
+
+                if stopped_out or profit_target_hit:
+                    in_position = False
+                    entry_idx = -1
+                elif time_exit:
+                    # Signal exit to be executed on the next bar open
+                    signals[i] = -1
+                    in_position = False
+                    entry_idx = -1
+                continue
+
+            if buy_condition.iloc[i]:
+                signals[i] = 1
+                in_position = True
+                entry_idx = i
+                entry_est = opens[i + 1] if i + 1 < n else closes[i]
+                current_stop_loss = lows[i]
+                current_take_profit = entry_est * (1.0 + self.target_profit_pct)
+
+        df['Signal'] = signals
 
         # --- Stop Loss, Profit Target, and Position Sizing ---
-        # Entry is at the close of the reversal candle
         entry_est = curr_close
-
-        # Stop loss placed at the low of the reversal candle (Bar 2)
         stop_loss_series = curr_low
 
         df['StopLoss'] = None
         df['TakeProfit'] = None
+        df['TakeProfitPct'] = self.target_profit_pct
         df['PositionSize'] = 0
 
         risk_amount = capital * risk_per_trade

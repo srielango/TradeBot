@@ -12,6 +12,7 @@ from back_test_engine import BacktestEngine
 from fundamental_screener import FundamentalScreener
 from market_repository import MarketRepository
 from morning_scanner import MorningScanner
+from entry_stop_loss_validator import validate_entry_stop_losses
 from paper_trading_engine import PaperTradingEngine
 from rsi_indicator import analyze_rsi
 from strategies.adx_ema_swing import (
@@ -36,7 +37,7 @@ def example_trading_dashboard() -> None:
 
 
 def example_bullish_kicker() -> None:
-    """Showcase Bullish Kicker candlestick strategy with 9% target and 1% risk sizing."""
+    """Showcase Bullish Kicker candlestick strategy with 10% target and 1% risk sizing."""
     print("=" * 80)
     print("BULLISH KICKER CANDLESTICK PATTERN STRATEGY SHOWCASE")
     print("=" * 80)
@@ -50,11 +51,11 @@ def example_bullish_kicker() -> None:
     print("     - Stop Loss: Low of Candle 1 (Day t-1 low).")
     print("     - Position Sizing: Risk 1% of total portfolio capital per trade.")
     print("  4. Profit Target Exit:")
-    print("     - Exit upon achieving 9.0% profit target.")
+    print("     - Exit upon achieving 10.0% profit target.")
     print("-" * 80)
 
     repo = MarketRepository()
-    strategy = BullishKicker(target_profit_pct=0.09)
+    strategy = BullishKicker(target_profit_pct=0.10)
 
     # 1. Single-Security Samples
     sample_tickers = ["INFY.NS", "RELIANCE.NS", "TCS.NS", "ASIANPAINT.NS"]
@@ -122,12 +123,12 @@ def example_bullish_kicker() -> None:
 
 
 def example_bullish_outside_bar() -> None:
-    """Showcase Bullish Outside Bar reversal strategy with 10% target and 1% risk sizing."""
+    """Showcase Bullish Outside Bar strategy with 20% target in 2-3 weeks."""
     print("=" * 80)
     print("BULLISH OUTSIDE BAR (ENGULFING) REVERSAL STRATEGY SHOWCASE")
     print("=" * 80)
     print("Strategy Checklist Rules:")
-    print("  1. Spotting the Setup (Preferred: Weekly Charts):")
+    print("  1. Spotting the Setup (Preferred: Daily / Weekly Charts):")
     print("     - Prior downtrend of at least 6-10% over the lookback window.")
     print("     - Bar 1 (t-1): Bearish candle (Close < Open).")
     print("     - Bar 2 (t): Engulfs Bar 1 completely (High > High[1], Low < Low[1]).")
@@ -138,12 +139,13 @@ def example_bullish_outside_bar() -> None:
     print("  3. Stop Loss & Position Sizing:")
     print("     - Stop Loss: Low of the reversal candle (Bar 2 low).")
     print("     - Position Sizing: Risk 1% of total portfolio capital per trade.")
-    print("  4. Profit Target Exit:")
-    print("     - Exit upon achieving 10.0% profit target.")
+    print("  4. Exit Plan:")
+    print("     - Profit Target: 20.0% gain.")
+    print("     - Time Exit: 2 to 3 weeks (15 trading days max holding).")
     print("-" * 80)
 
     repo = MarketRepository()
-    strategy = BullishOutsideBar(target_profit_pct=0.10)
+    strategy = BullishOutsideBar(target_profit_pct=0.20, max_holding_days=15)
 
     # 1. Single-Security Samples
     sample_tickers = ["INFY.NS", "RELIANCE.NS", "TCS.NS", "ASIANPAINT.NS"]
@@ -157,7 +159,7 @@ def example_bullish_outside_bar() -> None:
 
     engine = BacktestEngine(initial_capital=1_000_000.0)
     for ticker in sample_tickers:
-        df = repo.get_data(ticker)
+        df = repo.get_daily_data(ticker)
         if df.empty:
             continue
         signals_df = strategy.generate_signals(df)
@@ -172,7 +174,7 @@ def example_bullish_outside_bar() -> None:
 
     # 2. Multi-Stock Portfolio Backtest across all stocks
     print("\n[2] Multi-Stock Portfolio Backtest (All Active Stocks, 10% Capital Allocation):")
-    stocks_data = repo.get_all_stocks_data()
+    stocks_data = repo.get_all_stocks_daily_data()
     print(f"Loaded price records for {len(stocks_data)} active stocks from database.")
 
     signals_dict = {}
@@ -964,9 +966,9 @@ def example_paper_trading() -> None:
         print(f"  {len(open_trades)} active open position(s) currently being monitored:")
         for t in open_trades:
             print(
-                f"  Trade #{t['trade_id']}: {t['quantity']} {t['ticker']} @ INR {t['entry_price']:,.2f} "
-                f"| CMP: INR {t['current_price']:,.2f} | SL: {t['stop_loss']:,.2f} | "
-                f"Unrealized PnL: INR {t['unrealized_pnl']:,.2f}"
+                f"  Trade #{t['trade_id']}: {t['quantity']} {t['ticker']} @ "
+                f"INR {t['entry_price']:,.2f} | CMP: INR {t['current_price']:,.2f} | "
+                f"SL: {t['stop_loss']:,.2f} | Unrealized PnL: INR {t['unrealized_pnl']:,.2f}"
             )
     else:
         print("  No open positions currently in database.")
@@ -989,9 +991,23 @@ def example_paper_trading() -> None:
     print("=" * 80)
 
 
+def example_entry_stop_loss() -> None:
+    """Showcase and validate entry-based stop loss calculation across all strategies."""
+    print("=" * 80)
+    print("VALIDATING ENTRY-BASED STOP LOSS CALCULATIONS ACROSS SECURITIES")
+    print("=" * 80)
+    validate_entry_stop_losses(sample_size=20)
+
+
 def main() -> None:
     """Initialize and showcase the primary application functionality."""
     if (
+        "--entry-sl" in sys.argv
+        or "--entry-stop-loss" in sys.argv
+        or "--verify-stops" in sys.argv
+    ):
+        example_entry_stop_loss()
+    elif (
         "--paper-trading" in sys.argv
         or "--paper" in sys.argv
         or "--paper-engine" in sys.argv

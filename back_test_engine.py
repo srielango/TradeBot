@@ -73,7 +73,20 @@ class BacktestEngine:
 
         # Build fast date-indexed lookup structures for simulation performance
         ticker_date_data: dict[
-            str, dict[str, tuple[float, float, float, int, float | None, float | None]]
+            str,
+            dict[
+                str,
+                tuple[
+                    float,
+                    float,
+                    float,
+                    int,
+                    float | None,
+                    float | None,
+                    float | None,
+                    float | None,
+                ],
+            ],
         ] = {}
         all_dates_set = set()
 
@@ -90,12 +103,26 @@ class BacktestEngine:
             takeprofits = (
                 df['TakeProfit'].values if 'TakeProfit' in df.columns else [None] * len(df)
             )
+            stoplosspcts = (
+                df['StopLossPct'].values if 'StopLossPct' in df.columns else [None] * len(df)
+            )
+            takeprofitpcts = (
+                df['TakeProfitPct'].values if 'TakeProfitPct' in df.columns else [None] * len(df)
+            )
 
             ticker_dict = {}
-            for d, o, h, l, s, sl, tp in zip(
-                dates, opens, highs, lows, signals, stoplosses, takeprofits
+            for d, o, h, l, s, sl, tp, sl_pct, tp_pct in zip(
+                dates,
+                opens,
+                highs,
+                lows,
+                signals,
+                stoplosses,
+                takeprofits,
+                stoplosspcts,
+                takeprofitpcts,
             ):
-                d_str = str(d)[:10]
+                d_str = str(d)[:19]
                 ticker_dict[d_str] = (
                     float(o),
                     float(h),
@@ -103,6 +130,8 @@ class BacktestEngine:
                     int(s) if pd.notna(s) else 0,
                     float(sl) if pd.notna(sl) else None,
                     float(tp) if pd.notna(tp) else None,
+                    float(sl_pct) if pd.notna(sl_pct) else None,
+                    float(tp_pct) if pd.notna(tp_pct) else None,
                 )
                 all_dates_set.add(d_str)
 
@@ -111,7 +140,9 @@ class BacktestEngine:
         all_dates = sorted(all_dates_set)
         total_dates = len(all_dates)
         pending_exits = set()
-        pending_entries: dict[str, tuple[float | None, float | None]] = {}
+        pending_entries: dict[
+            str, tuple[float | None, float | None, float | None, float | None]
+        ] = {}
 
         for date_idx, date in enumerate(all_dates, start=1):
             if progress_callback is not None and (date_idx % 25 == 0 or date_idx == total_dates):
@@ -123,7 +154,7 @@ class BacktestEngine:
             for ticker, pos in list(positions.items()):
                 t_data = ticker_date_data.get(ticker, {}).get(date)
                 if t_data is not None:
-                    bar_open, bar_high, bar_low, _, _, _ = t_data
+                    bar_open, bar_high, bar_low, _, _, _, _, _ = t_data
                     stop_level = pos.get('StopLoss')
                     target_level = pos.get('TakeProfit')
 
@@ -186,7 +217,7 @@ class BacktestEngine:
                 if ticker in positions and ticker not in exited_today:
                     t_data = ticker_date_data.get(ticker, {}).get(date)
                     if t_data is not None:
-                        bar_open, _, _, _, _, _ = t_data
+                        bar_open, _, _, _, _, _, _, _ = t_data
                         pos = positions[ticker]
                         exit_price = bar_open
                         pnl = (exit_price - pos['EntryPrice']) * pos['Size']
@@ -213,25 +244,66 @@ class BacktestEngine:
             pending_exits.clear()
 
             # --- 3. Execute Pending Strategy Entries (Next-Day Open) ---
-            for ticker, (sl, tp) in list(pending_entries.items()):
+            for ticker, (sl_ref, tp_ref, sl_pct, tp_pct) in list(pending_entries.items()):
                 if ticker not in positions:
                     t_data = ticker_date_data.get(ticker, {}).get(date)
                     if t_data is not None:
-                        bar_open, _, _, _, _, _ = t_data
+                        bar_open, _, _, _, _, _, _, _ = t_data
+                        entry_price = bar_open
+                        if entry_price <= 0:
+                            continue
+
+                        # Stop Loss is calculated on entering the position, based on
+                        # the actual entry price and the strategy's maintained rule
+                        if sl_pct is not None and sl_pct > 0:
+                            stop_loss = round(entry_price * (1.0 - sl_pct), 2)
+                        elif sl_ref is not None and 0 < sl_ref < entry_price:
+                            stop_loss = round(sl_ref, 2)
+                        else:
+                            # Fallback if gap down breached structural stop:
+                            # calculate stop loss strictly from entry price (5% buffer)
+                            stop_loss = round(entry_price * 0.95, 2)
+
+                        # Strict safety guarantee: Stop Loss strictly below Entry Price
+                        if stop_loss >= entry_price:
+                            stop_loss = round(entry_price * 0.95, 2)
+
+                        # Take profit target calculated on entry
+                        if tp_pct is not None and tp_pct > 0:
+                            take_profit = round(entry_price * (1.0 + tp_pct), 2)
+                        elif tp_ref is not None and tp_ref > entry_price:
+                            take_profit = round(tp_ref, 2)
+                        else:
+                            take_profit = round(
+                                entry_price + 2.0 * (entry_price - stop_loss), 2
+                            )
+
+                        # Dynamic position sizing based on entry price and risk per share
+                        risk_per_share = entry_price - stop_loss
                         alloc = min(trade_capital_target, cash)
-                        if bar_open > 0:
-                            size = int(alloc / bar_open)
-                            if size > 0 and cash >= size * bar_open:
-                                cost = size * bar_open
-                                cash -= cost
-                                positions[ticker] = {
-                                    "Security": ticker,
-                                    "EntryDate": date,
-                                    "EntryPrice": bar_open,
-                                    "StopLoss": sl,
-                                    "TakeProfit": tp,
-                                    "Size": size,
-                                }
+                        max_cap_size = int(alloc / entry_price)
+                        risk_size = (
+                            int(self.risk_amount / risk_per_share)
+                            if risk_per_share > 0
+                            else max_cap_size
+                        )
+                        size = (
+                            max(1, min(max_cap_size, risk_size))
+                            if max_cap_size > 0
+                            else 0
+                        )
+
+                        if size > 0 and cash >= size * entry_price:
+                            cost = size * entry_price
+                            cash -= cost
+                            positions[ticker] = {
+                                "Security": ticker,
+                                "EntryDate": date,
+                                "EntryPrice": entry_price,
+                                "StopLoss": stop_loss,
+                                "TakeProfit": take_profit,
+                                "Size": size,
+                            }
 
             pending_entries.clear()
 
@@ -239,11 +311,11 @@ class BacktestEngine:
             for ticker, t_dict in ticker_date_data.items():
                 t_data = t_dict.get(date)
                 if t_data is not None:
-                    _, _, _, sig, sl, tp = t_data
+                    _, _, _, sig, sl, tp, sl_pct, tp_pct = t_data
                     if sig == -1 and ticker in positions:
                         pending_exits.add(ticker)
                     elif sig == 1 and ticker not in positions:
-                        pending_entries[ticker] = (sl, tp)
+                        pending_entries[ticker] = (sl, tp, sl_pct, tp_pct)
 
         # --- Sort & Format Completed Trades ---
         df_trades = pd.DataFrame(trades)
