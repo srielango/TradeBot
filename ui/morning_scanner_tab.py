@@ -62,7 +62,7 @@ class ScannerWorker(QThread):
 
 
 class MorningScannerTab(QWidget):
-    """Morning Scanner dashboard tab identifying actionable buy signals on previous close."""
+    """Morning Scanner dashboard tab identifying actionable buy and sell signals."""
 
     ticker_selected = pyqtSignal(str)
 
@@ -126,12 +126,14 @@ class MorningScannerTab(QWidget):
         control_layout.addWidget(QLabel("<b>Filter Signal:</b>"), 1, 0)
         self.filter_combo = QComboBox()
         self.filter_combo.addItem("All Stocks (50)", "all")
+        self.filter_combo.addItem("Sell Signals (Open Positions)", "sell_only")
         self.filter_combo.addItem("Buy Signals Only", "buy_only")
         self.filter_combo.addItem("Multi-Strategy Confluence (2+)", "confluence_only")
+        self.filter_combo.addItem("Open Positions Only", "open_positions")
         self.filter_combo.setSizeAdjustPolicy(
             QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
         )
-        self.filter_combo.setMinimumContentsLength(16)
+        self.filter_combo.setMinimumContentsLength(18)
         self.filter_combo.setCurrentIndex(0)
         self.filter_combo.currentIndexChanged.connect(self.apply_table_filters)
         control_layout.addWidget(self.filter_combo, 1, 1)
@@ -184,11 +186,13 @@ class MorningScannerTab(QWidget):
         kpi_layout.setSpacing(12)
 
         self.kpi_total = self._create_kpi_card("Total Stocks", "50", "#abb2bf")
+        self.kpi_sells = self._create_kpi_card("Sell Signals (Profit Hit)", "0", "#e06c75")
         self.kpi_buys = self._create_kpi_card("Buy Signals (Prev Close)", "0", "#2ecc71")
         self.kpi_confluence = self._create_kpi_card("Multi-Strategy Confluence", "0", "#f1c40f")
         self.kpi_session_date = self._create_kpi_card("Previous Close Date", "N/A", "#61afef")
 
         kpi_layout.addWidget(self.kpi_total["frame"])
+        kpi_layout.addWidget(self.kpi_sells["frame"])
         kpi_layout.addWidget(self.kpi_buys["frame"])
         kpi_layout.addWidget(self.kpi_confluence["frame"])
         kpi_layout.addWidget(self.kpi_session_date["frame"])
@@ -202,7 +206,7 @@ class MorningScannerTab(QWidget):
         headers = [
             "Ticker",
             "Company Name",
-            "Buy Indicator",
+            "Signal Indicator",
             "Triggered Strategies (Previous Close)",
             "Previous Close (INR)",
             "Stop Loss (INR)",
@@ -322,13 +326,15 @@ class MorningScannerTab(QWidget):
 
         # Update KPI summary numbers
         total_stocks = len(results)
-        buy_stocks = sum(1 for r in results if r["confluence_count"] >= 1)
+        sell_stocks = sum(1 for r in results if r["indicator"] == "SELL")
+        buy_stocks = sum(1 for r in results if r["indicator"] in ("BUY", "STRONG BUY"))
         confluence_stocks = sum(1 for r in results if r["confluence_count"] >= 2)
 
         latest_date = results[0]["prev_close_date"] if results else "N/A"
         date_str = latest_date.split(" ")[0] if " " in latest_date else latest_date
 
         self.kpi_total["value_label"].setText(str(total_stocks))
+        self.kpi_sells["value_label"].setText(str(sell_stocks))
         self.kpi_buys["value_label"].setText(str(buy_stocks))
         self.kpi_confluence["value_label"].setText(str(confluence_stocks))
         self.kpi_session_date["value_label"].setText(date_str)
@@ -350,9 +356,13 @@ class MorningScannerTab(QWidget):
         filtered = []
         for r in self.all_results:
             # Signal mode filter
-            if filter_mode == "buy_only" and r["confluence_count"] < 1:
+            if filter_mode == "sell_only" and r["indicator"] != "SELL":
+                continue
+            if filter_mode == "buy_only" and r["indicator"] not in ("BUY", "STRONG BUY"):
                 continue
             if filter_mode == "confluence_only" and r["confluence_count"] < 2:
+                continue
+            if filter_mode == "open_positions" and not r.get("has_open_position"):
                 continue
 
             # Search text filter
@@ -360,7 +370,9 @@ class MorningScannerTab(QWidget):
                 t_match = search_query in r["ticker"].lower()
                 n_match = search_query in r["name"].lower()
                 s_match = search_query in r["strategies_str"].lower()
-                if not (t_match or n_match or s_match):
+                ind_match = search_query in r["indicator_badge"].lower()
+                act_match = search_query in r["target_action"].lower()
+                if not (t_match or n_match or s_match or ind_match or act_match):
                     continue
 
             filtered.append(r)
@@ -393,10 +405,14 @@ class MorningScannerTab(QWidget):
             ind_font.setBold(True)
             item_indicator.setFont(ind_font)
 
-            if r["confluence_count"] >= 2:
+            if r["indicator"] == "SELL":
+                item_indicator.setForeground(QColor("#e06c75"))  # Vivid Red/Coral for Sell
+            elif r["confluence_count"] >= 2:
                 item_indicator.setForeground(QColor("#2ecc71"))  # Vivid Emerald
             elif r["confluence_count"] == 1:
                 item_indicator.setForeground(QColor("#27ae60"))  # Green
+            elif r["indicator"] == "HOLD":
+                item_indicator.setForeground(QColor("#e5c07b"))  # Warm Gold for Hold
             else:
                 item_indicator.setForeground(QColor("#7f8c8d"))  # Gray
             self.table.setItem(row_idx, 2, item_indicator)
@@ -439,6 +455,11 @@ class MorningScannerTab(QWidget):
 
             # Target Action / Setup
             item_action = QTableWidgetItem(r["target_action"])
+            if r["indicator"] == "SELL":
+                item_action.setForeground(QColor("#e06c75"))
+                act_font = item_action.font()
+                act_font.setBold(True)
+                item_action.setFont(act_font)
             self.table.setItem(row_idx, 7, item_action)
 
             # Close Date
@@ -460,13 +481,24 @@ class MorningScannerTab(QWidget):
             self._update_detail_inspector(self.filtered_results[row_idx])
 
     def _update_detail_inspector(self, stock_record: dict[str, Any]) -> None:
-        """Update the detailed bottom panel with per-strategy breakdown for selected stock."""
+        """Update the detailed bottom panel with per-strategy breakdown and position status."""
         ticker = stock_record["ticker"]
         name = stock_record["name"]
-        self.detail_group.setTitle(
-            f"Strategy Breakdown for {ticker} ({name}) - Previous Close: INR "
-            f"{stock_record['prev_close_price']:,.2f} on {stock_record['prev_close_date']}"
-        )
+        chosen = stock_record.get("chosen_strategy")
+        has_pos = stock_record.get("has_open_position", False)
+
+        header_parts = [
+            (
+                f"Strategy Breakdown for {ticker} ({name}) - Previous Close: INR "
+                f"{stock_record['prev_close_price']:,.2f} on {stock_record['prev_close_date']}"
+            )
+        ]
+        if has_pos:
+            header_parts.append("[ACTIVE OPEN POSITION]")
+        if chosen and stock_record["confluence_count"] >= 2:
+            header_parts.append(f"[Chosen Least-Profit Setup: {chosen}]")
+
+        self.detail_group.setTitle(" | ".join(header_parts))
 
         strat_details = stock_record.get("strategy_details", {})
         for strat_name, label in self.strategy_labels.items():
@@ -484,8 +516,14 @@ class MorningScannerTab(QWidget):
                     details.append(f"SL: INR {sl:,.2f}")
                 if tp:
                     details.append(f"TP: INR {tp:,.2f}")
-                label.setText(f"[YES] {' | '.join(details)}")
-                label.setStyleSheet("color: #2ecc71; font-weight: bold;")
+                is_chosen = (strat_name == chosen and stock_record["confluence_count"] >= 2)
+                if is_chosen:
+                    details.append("(SELECTED: LEAST PROFIT)")
+                    label.setText(f"[YES - ACTIVE] {' | '.join(details)}")
+                    label.setStyleSheet("color: #61afef; font-weight: bold;")
+                else:
+                    label.setText(f"[YES] {' | '.join(details)}")
+                    label.setStyleSheet("color: #2ecc71; font-weight: bold;")
             else:
                 label.setText("[NO] No Buy Signal")
                 label.setStyleSheet("color: #7f8c8d;")

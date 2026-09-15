@@ -9,10 +9,10 @@ from PyQt6.QtWidgets import QApplication
 
 from adx_indicator import analyze_adx
 from back_test_engine import BacktestEngine
+from entry_stop_loss_validator import validate_entry_stop_losses
 from fundamental_screener import FundamentalScreener
 from market_repository import MarketRepository
 from morning_scanner import MorningScanner
-from entry_stop_loss_validator import validate_entry_stop_losses
 from paper_trading_engine import PaperTradingEngine
 from rsi_indicator import analyze_rsi
 from strategies.adx_ema_swing import (
@@ -445,7 +445,14 @@ def example_morning_scanner(
     lookback_months: int = 6,
     trigger_scope: str = "previous_day",
 ) -> None:
-    """Showcase TradeBot Morning Scanner for pre-market buy signal detection on previous close.
+    """Showcase TradeBot Morning Scanner for pre-market buy and sell signal detection.
+
+    Demonstrates:
+    1. Evaluating open positions and detecting SELL signals when required profit
+       target or stop loss is reached on previous close.
+    2. Scanning universe for BUY signals triggered across registered strategies.
+    3. Conservative multi-strategy confluence selection: choosing the strategy
+       with the least profit to define both Stop Loss and Take Profit levels.
 
     Args:
         lookback_months (int): Historical window (3 to 6 months) for indicator warm-up.
@@ -456,16 +463,17 @@ def example_morning_scanner(
         if trigger_scope == "last_bar"
         else "Previous Trading Day (Full Session)"
     )
-    print("=" * 100)
-    print("TRADEBOT MORNING SCANNER - PREVIOUS CLOSE BUY SIGNALS")
-    print("=" * 100)
+    print("=" * 105)
+    print("TRADEBOT MORNING SCANNER - PRE-MARKET BUY & SELL SIGNALS")
+    print("=" * 105)
     print("Scanner Architecture & Rules:")
     print("  1. Universe: All 50 active equity stocks from database (excluding market indices).")
     print(f"  2. Indicator Warm-up: Past {lookback_months} months of historical data used.")
     print(f"  3. Trigger Scope: {scope_label}.")
-    print("  4. Trigger Logic: Strategy shown against stock ONLY if BUY was triggered in scope.")
-    print("  5. Confluence: If multiple strategies indicate BUY, all are listed next to stock.")
-    print("-" * 100)
+    print("  4. Open Position Monitoring: Checks active trades; signals SELL when profit target hit.")
+    print("  5. Least-Profit Confluence: When multiple strategies trigger BUY, selects the setup")
+    print("     yielding the lowest profit target to derive conservative Stop Loss and Take Profit.")
+    print("-" * 105)
 
     scanner = MorningScanner()
     results = scanner.scan(
@@ -479,26 +487,52 @@ def example_morning_scanner(
 
     # Aggregate KPI summary metrics
     total_scanned = len(results)
-    buy_stocks = [r for r in results if r["confluence_count"] >= 1]
+    sell_stocks = [r for r in results if r["indicator"] == "SELL"]
+    buy_stocks = [r for r in results if r["indicator"] in ("BUY", "STRONG BUY")]
     confluence_stocks = [r for r in results if r["confluence_count"] >= 2]
     prev_close_date = results[0]["prev_close_date"] if results else "N/A"
 
     print(f"\n[1] Scan Summary Metrics (Session Close: {prev_close_date}):")
-    print(f"  - Total Equities Evaluated : {total_scanned} stocks")
-    print(f"  - Stocks with Buy Signal   : {len(buy_stocks)} stocks")
+    print(f"  - Total Equities Evaluated     : {total_scanned} stocks")
+    print(f"  - Sell Signals (Profit Target) : {len(sell_stocks)} position(s)")
+    print(f"  - Buy Signals (Prev Close)     : {len(buy_stocks)} stocks")
     print(
-        f"  - Multi-Strategy Confluence: {len(confluence_stocks)} stocks "
+        f"  - Multi-Strategy Confluence    : {len(confluence_stocks)} stocks "
         "(confirmed by 2+ strategies)"
     )
 
-    # Section 2: Display stocks triggering BUY signals on previous close
-    print(f"\n[2] Actionable Stocks Triggering BUY on Previous Close ({len(buy_stocks)} Stocks):")
-    header = (
-        f"{'Ticker':<14} | {'Indicator':<18} | {'Prev Close':<12} | "
-        f"{'Stop Loss':<12} | {'Triggered Strategies (Previous Close)'}"
+    # Section 2: Actionable SELL signals for open positions reaching required profit
+    print(f"\n[2] Actionable SELL Signals for Open Positions ({len(sell_stocks)} Positions):")
+    sell_header = (
+        f"{'Ticker':<14} | {'Indicator':<24} | {'Prev Close':<12} | "
+        f"{'Target / SL':<14} | {'Target Action / Exit Guidance'}"
     )
-    print(header)
-    print("-" * len(header))
+    print(sell_header)
+    print("-" * len(sell_header))
+
+    if not sell_stocks:
+        print("No open positions have reached their required profit target or stop loss.")
+    else:
+        for r in sell_stocks:
+            ticker = r["ticker"]
+            badge = r["indicator_badge"]
+            close_str = f"INR {r['prev_close_price']:>7.2f}"
+            tp_str = f"INR {r['take_profit']:>7.2f}" if r["take_profit"] else "N/A"
+            action_str = r["target_action"]
+            print(
+                f"{ticker:<14} | {badge:<24} | {close_str:<12} | "
+                f"{tp_str:<14} | {action_str}"
+            )
+    print("-" * len(sell_header))
+
+    # Section 3: Display stocks triggering BUY signals on previous close
+    print(f"\n[3] Actionable Stocks Triggering BUY on Previous Close ({len(buy_stocks)} Stocks):")
+    buy_header = (
+        f"{'Ticker':<14} | {'Indicator':<18} | {'Prev Close':<12} | "
+        f"{'Stop Loss':<12} | {'Take Profit':<14} | {'Triggered Strategies'}"
+    )
+    print(buy_header)
+    print("-" * len(buy_header))
 
     if not buy_stocks:
         print("No stocks triggered a buy signal on the previous close.")
@@ -508,20 +542,28 @@ def example_morning_scanner(
             badge = r["indicator_badge"]
             close_str = f"INR {r['prev_close_price']:>7.2f}"
             sl_str = f"INR {r['stop_loss']:>7.2f}" if r["stop_loss"] else "N/A"
+            tp_str = (
+                f"INR {r['take_profit']:>7.2f}"
+                if r["take_profit"]
+                else "N/A"
+            )
             strats = r["strategies_str"]
             print(
                 f"{ticker:<14} | {badge:<18} | {close_str:<12} | "
-                f"{sl_str:<12} | {strats}"
+                f"{sl_str:<12} | {tp_str:<14} | {strats}"
             )
-    print("-" * len(header))
+    print("-" * len(buy_header))
 
-    # Section 3: Sample breakdown showing all 4 strategies evaluated for top setups
+    # Section 4: Sample breakdown showing strategy evaluation and least-profit attribution
     if buy_stocks:
         sample_stock = buy_stocks[0]
         sym = sample_stock['ticker']
         s_name = sample_stock['name']
-        print(f"\n[3] Strategy Verification Sample for {sym} ({s_name}):")
-        for s_name, s_info in sample_stock["strategy_details"].items():
+        chosen = sample_stock.get('chosen_strategy')
+        print(f"\n[4] Strategy Verification Sample for {sym} ({s_name}):")
+        if chosen and sample_stock['confluence_count'] >= 2:
+            print(f"    * Chosen Conservative Strategy (Least Profit): {chosen}")
+        for st_name, s_info in sample_stock["strategy_details"].items():
             triggered_status = "TRIGGERED [BUY]" if s_info["is_buy"] else "NO SIGNAL"
             sl_info = (
                 f" | SL: INR {s_info['stop_loss']:,.2f}"
@@ -533,7 +575,8 @@ def example_morning_scanner(
                 if s_info.get("take_profit")
                 else ""
             )
-            print(f"    * {s_name:<48}: {triggered_status}{sl_info}{tp_info}")
+            selected_note = " <== (SELECTED: LEAST PROFIT)" if st_name == chosen else ""
+            print(f"    * {st_name:<48}: {triggered_status}{sl_info}{tp_info}{selected_note}")
 
 
 def example_adx_ema_swing() -> None:
