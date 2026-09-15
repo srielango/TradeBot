@@ -345,6 +345,40 @@ class BacktestEngine:
         total_pnl = float(df_trades["PnL"].sum()) if total_trades > 0 else 0.0
         final_capital = self.initial_capital + total_pnl
 
+        # Profit / Loss percentage
+        total_pnl_pct = (
+            (total_pnl / self.initial_capital) * 100.0
+            if self.initial_capital > 0
+            else 0.0
+        )
+
+        # Compound Annual Growth Rate (CAGR) calculation
+        duration_days = 0
+        if all_dates:
+            try:
+                start_dt = pd.to_datetime(all_dates[0])
+                end_dt = pd.to_datetime(all_dates[-1])
+                duration_days = max(1, (end_dt - start_dt).days)
+            except (ValueError, TypeError):
+                duration_days = 0
+
+        if duration_days <= 0 and not df_trades.empty:
+            try:
+                start_dt = pd.to_datetime(df_trades["EntryDate"].min())
+                end_dt = pd.to_datetime(df_trades["ExitDate"].max())
+                duration_days = max(1, (end_dt - start_dt).days)
+            except (ValueError, TypeError):
+                duration_days = 365
+
+        duration_years = max(duration_days / 365.25, 1.0 / 365.25)
+        if final_capital > 0 and self.initial_capital > 0:
+            cagr = (final_capital / self.initial_capital) ** (1.0 / duration_years) - 1.0
+        elif final_capital <= 0:
+            cagr = -1.0
+        else:
+            cagr = 0.0
+        cagr_pct = cagr * 100.0
+
         return {
             "TradeLog": df_trades,
             "Metrics": {
@@ -352,7 +386,12 @@ class BacktestEngine:
                 "Wins": wins,
                 "Losses": losses,
                 "TotalPnL": total_pnl,
+                "TotalPnLPct": total_pnl_pct,
+                "CAGR": cagr,
+                "CAGRPct": cagr_pct,
                 "WinRatePct": win_rate,
                 "FinalCapital": final_capital,
+                "DurationDays": duration_days,
+                "DurationYears": duration_years,
             },
         }

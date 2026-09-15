@@ -585,17 +585,53 @@ class NiftyDualMomentumBreakout(BaseStrategy):
             final_cap = initial_capital
             profit_factor = 0.0
 
+        total_return_pct = (
+            (total_pnl / initial_capital) * 100.0 if initial_capital > 0 else 0.0
+        )
+
+        # Compute duration for CAGR calculation
+        duration_days = 0
+        if not df.empty and "date" in df.columns:
+            try:
+                s_dt = pd.to_datetime(df["date"].iloc[0])
+                e_dt = pd.to_datetime(df["date"].iloc[-1])
+                duration_days = max(1, (e_dt - s_dt).days)
+            except (ValueError, TypeError):
+                duration_days = 0
+
+        if duration_days <= 0 and total_trades > 0:
+            try:
+                s_dt = pd.to_datetime(trade_log["EntryDate"].min())
+                e_dt = pd.to_datetime(trade_log["ExitDate"].max())
+                duration_days = max(1, (e_dt - s_dt).days)
+            except (ValueError, TypeError):
+                duration_days = 365
+
+        duration_years = max(duration_days / 365.25, 1.0 / 365.25)
+        if final_cap > 0 and initial_capital > 0:
+            cagr = (final_cap / initial_capital) ** (1.0 / duration_years) - 1.0
+        elif final_cap <= 0:
+            cagr = -1.0
+        else:
+            cagr = 0.0
+        cagr_pct = cagr * 100.0
+
         metrics = {
             "InitialCapital": initial_capital,
             "FinalCapital": final_cap,
             "TotalPnL": total_pnl,
-            "TotalReturnPct": (total_pnl / initial_capital) * 100.0,
+            "TotalReturnPct": total_return_pct,
+            "TotalPnLPct": total_return_pct,
+            "CAGR": cagr,
+            "CAGRPct": cagr_pct,
             "TotalTrades": total_trades,
             "Wins": int(wins),
             "Losses": int(losses),
             "Breakevens": int(bes),
             "WinRatePct": win_rate,
             "ProfitFactor": profit_factor,
+            "DurationDays": duration_days,
+            "DurationYears": duration_years,
         }
 
         return {"Metrics": metrics, "TradeLog": trade_log}

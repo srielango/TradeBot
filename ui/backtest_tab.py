@@ -142,20 +142,26 @@ class BacktestTab(QWidget):
         metrics_layout.setSpacing(12)
 
         self.card_trades = self.create_metric_card("Total Trades", "0")
-        self.card_pnl = self.create_metric_card("Total PnL (INR)", "₹ 0.00")
-        self.card_winrate = self.create_metric_card("Win Rate", "0.0 %")
         self.card_wins = self.create_metric_card("Total Wins", "0")
         self.card_losses = self.create_metric_card("Total Losses", "0")
+        self.card_winrate = self.create_metric_card("Win Rate", "0.0 %")
+
+        self.card_pnl = self.create_metric_card("Total PnL (INR)", "₹ 0.00")
+        self.card_pnl_pct = self.create_metric_card("Profit / Loss %", "0.00 %")
+        self.card_cagr = self.create_metric_card("CAGR", "0.00 %")
         self.card_final_capital = self.create_metric_card(
             "Final Capital", f"₹ {DEFAULT_INITIAL_CAPITAL:,.2f}"
         )
 
         metrics_layout.addWidget(self.card_trades["frame"], 0, 0)
-        metrics_layout.addWidget(self.card_pnl["frame"], 0, 1)
-        metrics_layout.addWidget(self.card_winrate["frame"], 0, 2)
-        metrics_layout.addWidget(self.card_wins["frame"], 0, 3)
-        metrics_layout.addWidget(self.card_losses["frame"], 0, 4)
-        metrics_layout.addWidget(self.card_final_capital["frame"], 0, 5)
+        metrics_layout.addWidget(self.card_wins["frame"], 0, 1)
+        metrics_layout.addWidget(self.card_losses["frame"], 0, 2)
+        metrics_layout.addWidget(self.card_winrate["frame"], 0, 3)
+
+        metrics_layout.addWidget(self.card_pnl["frame"], 1, 0)
+        metrics_layout.addWidget(self.card_pnl_pct["frame"], 1, 1)
+        metrics_layout.addWidget(self.card_cagr["frame"], 1, 2)
+        metrics_layout.addWidget(self.card_final_capital["frame"], 1, 3)
 
         main_layout.addWidget(metrics_group)
 
@@ -488,6 +494,14 @@ class BacktestTab(QWidget):
         """
         total_trades = metrics.get("TotalTrades", 0)
         total_pnl = metrics.get("TotalPnL", 0.0)
+        total_pnl_pct = metrics.get("TotalPnLPct")
+        if total_pnl_pct is None:
+            total_pnl_pct = (
+                (total_pnl / DEFAULT_INITIAL_CAPITAL) * 100.0
+                if DEFAULT_INITIAL_CAPITAL > 0
+                else 0.0
+            )
+        cagr_pct = metrics.get("CAGRPct", 0.0)
         win_rate = metrics.get("WinRatePct", 0.0)
         wins = metrics.get("Wins", 0)
         losses = metrics.get("Losses", 0)
@@ -499,6 +513,16 @@ class BacktestTab(QWidget):
         pnl_color = "#4caf50" if total_pnl >= 0 else "#f44336"
         self.card_pnl["value_label"].setText(pnl_text)
         self.card_pnl["value_label"].setStyleSheet(f"color: {pnl_color};")
+
+        pnl_pct_text = f"{total_pnl_pct:+.2f} %"
+        pnl_pct_color = "#4caf50" if total_pnl_pct >= 0 else "#f44336"
+        self.card_pnl_pct["value_label"].setText(pnl_pct_text)
+        self.card_pnl_pct["value_label"].setStyleSheet(f"color: {pnl_pct_color};")
+
+        cagr_text = f"{cagr_pct:+.2f} %"
+        cagr_color = "#4caf50" if cagr_pct >= 0 else "#f44336"
+        self.card_cagr["value_label"].setText(cagr_text)
+        self.card_cagr["value_label"].setStyleSheet(f"color: {cagr_color};")
 
         self.card_winrate["value_label"].setText(f"{win_rate:.1f} %")
         self.card_wins["value_label"].setText(str(wins))

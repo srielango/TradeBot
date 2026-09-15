@@ -106,7 +106,8 @@ def example_bullish_kicker() -> None:
     print(f"  Winning Trades : {pm['Wins']}")
     print(f"  Losing Trades  : {pm['Losses']}")
     print(f"  Win Rate       : {pm['WinRatePct']:.1f} %")
-    print(f"  Total PnL      : INR {pm['TotalPnL']:+,.2f}")
+    print(f"  Total PnL      : INR {pm['TotalPnL']:+,.2f} ({pm['TotalPnLPct']:+.2f}%)")
+    print(f"  CAGR           : {pm['CAGRPct']:+.2f} %")
     print(f"  Final Capital  : INR {pm['FinalCapital']:,.2f}")
 
     if not trade_log.empty:
@@ -196,7 +197,8 @@ def example_bullish_outside_bar() -> None:
     print(f"  Winning Trades : {pm['Wins']}")
     print(f"  Losing Trades  : {pm['Losses']}")
     print(f"  Win Rate       : {pm['WinRatePct']:.1f} %")
-    print(f"  Total PnL      : INR {pm['TotalPnL']:+,.2f}")
+    print(f"  Total PnL      : INR {pm['TotalPnL']:+,.2f} ({pm['TotalPnLPct']:+.2f}%)")
+    print(f"  CAGR           : {pm['CAGRPct']:+.2f} %")
     print(f"  Final Capital  : INR {pm['FinalCapital']:,.2f}")
 
     if not trade_log.empty:
@@ -244,7 +246,8 @@ def example_all_stocks_backtest() -> None:
     print(f"  Winning Trades : {m['Wins']}")
     print(f"  Losing Trades  : {m['Losses']}")
     print(f"  Win Rate       : {m['WinRatePct']:.1f} %")
-    print(f"  Total PnL      : INR {m['TotalPnL']:+,.2f}")
+    print(f"  Total PnL      : INR {m['TotalPnL']:+,.2f} ({m['TotalPnLPct']:+.2f}%)")
+    print(f"  CAGR           : {m['CAGRPct']:+.2f} %")
     print(f"  Final Capital  : INR {m['FinalCapital']:,.2f}")
 
     if not trade_log.empty:
@@ -471,9 +474,15 @@ def example_morning_scanner(
     print("  1. Universe: All 50 active equity stocks from database (excluding market indices).")
     print(f"  2. Indicator Warm-up: Past {lookback_months} months of historical data used.")
     print(f"  3. Trigger Scope: {scope_label}.")
-    print("  4. Open Position Monitoring: Checks active trades; signals SELL when profit target hit.")
+    print(
+        "  4. Open Position Monitoring: Checks active trades; "
+        "signals SELL when profit target hit."
+    )
     print("  5. Least-Profit Confluence: When multiple strategies trigger BUY, selects the setup")
-    print("     yielding the lowest profit target to derive conservative Stop Loss and Take Profit.")
+    print(
+        "     yielding the lowest profit target to derive conservative "
+        "Stop Loss and Take Profit."
+    )
     print("-" * 105)
 
     scanner = MorningScanner()
@@ -763,7 +772,8 @@ def example_dual_moving_average_adx() -> None:
     print(f"  Winning Trades : {pm['Wins']}")
     print(f"  Losing Trades  : {pm['Losses']}")
     print(f"  Win Rate       : {pm['WinRatePct']:.1f} %")
-    print(f"  Total Net PnL  : INR {pm['TotalPnL']:,.2f}")
+    print(f"  Total Net PnL  : INR {pm['TotalPnL']:,.2f} ({pm['TotalPnLPct']:+.2f}%)")
+    print(f"  CAGR           : {pm['CAGRPct']:+.2f} %")
     print(f"  Final Capital  : INR {pm['FinalCapital']:,.2f}")
 
     if not trade_log.empty:
@@ -1110,8 +1120,8 @@ def example_nifty_dual_momentum_breakout() -> None:
     # Section 2: Hourly Backtest simulation across sample securities
     print("\n[2] Hourly Historical Backtest Sample (INR 1,000,000 Capital, 10% Allocation):")
     btest_header = (
-        f"{'Ticker':<14} | {'Trades':<8} | {'Wins':<6} | {'Losses':<8} | "
-        f"{'Breakeven':<10} | {'Win Rate':<10} | {'Total PnL (INR)':<16} | {'Profit Factor'}"
+        f"{'Ticker':<14} | {'Trades':<6} | {'Wins':<5} | {'Losses':<6} | "
+        f"{'Win Rate':<9} | {'Total PnL (INR)':<16} | {'PnL %':<8} | {'CAGR':<8} | {'PF':<5}"
     )
     print(btest_header)
     print("-" * len(btest_header))
@@ -1124,11 +1134,13 @@ def example_nifty_dual_momentum_breakout() -> None:
         btest_res = strategy.backtest(df, ticker=ticker, initial_capital=1_000_000.0)
         m = btest_res["Metrics"]
         pnl_str = f"INR {m['TotalPnL']:>11,.2f}"
+        pnl_pct_str = f"{m.get('TotalPnLPct', 0.0):+.2f}%"
+        cagr_str = f"{m.get('CAGRPct', 0.0):+.2f}%"
         pf_str = f"{m['ProfitFactor']:.2f}" if m['ProfitFactor'] != float("inf") else "inf"
 
         print(
-            f"{ticker:<14} | {m['TotalTrades']:<8} | {m['Wins']:<6} | {m['Losses']:<8} | "
-            f"{m['Breakevens']:<10} | {m['WinRatePct']:<9.1f}% | {pnl_str} | {pf_str}"
+            f"{ticker:<14} | {m['TotalTrades']:<6} | {m['Wins']:<5} | {m['Losses']:<6} | "
+            f"{m['WinRatePct']:<8.1f}% | {pnl_str} | {pnl_pct_str:<8} | {cagr_str:<8} | {pf_str}"
         )
     print("-" * len(btest_header))
 
