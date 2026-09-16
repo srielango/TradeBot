@@ -1047,6 +1047,129 @@ def example_paper_trading() -> None:
     print("=" * 80)
 
 
+def example_paper_trading_enhancements() -> None:
+    """Showcase paper trading enhancements: searchable security, SL/target modification, and partial selling."""
+    print("=" * 85)
+    print("PAPER TRADING ENHANCEMENTS SHOWCASE")
+    print("=" * 85)
+    print("Enhancements Implemented:")
+    print("  1. Interactive Stock Search by Typing: Substring/contains filtering across Nifty 50.")
+    print("  2. Open Position Modification: Update Stop Loss and Target with live risk preview.")
+    print("  3. Partial Position Selling: Sell partial quantities, credit capital, and record PnL.")
+    print("-" * 85)
+
+    engine = PaperTradingEngine()
+
+    # Part 1: Stock Search Simulation
+    print("\n[1] Substring / Contains Search across Nifty 50 Securities:")
+    search_queries = ["tata", "sbi", "reliance", "infy", "motor"]
+    all_stocks = engine.get_nifty50_tickers()
+    for q in search_queries:
+        matches = [
+            s
+            for s in all_stocks
+            if q.upper() in s["ticker"].upper() or q.upper() in s.get("name", "").upper()
+        ]
+        sample_str = ", ".join([f"{m['ticker']} ({m['name']})" for m in matches[:3]])
+        print(f"  Search '{q:<8}' -> Found {len(matches):>2} match(es): {sample_str}")
+
+    # Part 2: Place a temporary showcase trade
+    print("\n[2] Executing a Controlled Showcase Trade (INFY.NS):")
+    initial_cash = engine.get_cash_balance()
+    ticker = "INFY.NS"
+    entry_price = 1800.00
+    stop_loss = 1750.00
+    sell_target = 1950.00
+    order = engine.place_order(
+        ticker=ticker,
+        entry_price=entry_price,
+        stop_loss=stop_loss,
+        sell_target=sell_target,
+        override_quantity=100,
+    )
+    trade_id = order["trade_id"]
+    print(
+        f"  Opened Trade #{trade_id}: {order['quantity']} shares of {order['ticker']} "
+        f"@ INR {order['entry_price']:,.2f} "
+        f"(SL: INR {order['stop_loss']:,.2f}, Target: INR {order['sell_target']:,.2f})"
+    )
+    print(f"  Initial Trade Capital : INR {order['total_cost']:,.2f}")
+    print(f"  Remaining Cash        : INR {order['remaining_cash']:,.2f}")
+
+    # Part 3: Modify Stop Loss and Target
+    print("\n[3] Modifying Stop Loss & Target on Active Trade:")
+    new_sl = 1780.00
+    new_target = 2000.00
+    mod_res = engine.update_trade_sl_and_target(
+        trade_id=trade_id,
+        stop_loss=new_sl,
+        sell_target=new_target,
+    )
+    print(
+        f"  Trade #{trade_id} Updated Successfully:\n"
+        f"    Old SL: INR {stop_loss:,.2f}  ->  New Trailing SL: INR {mod_res['stop_loss']:,.2f}\n"
+        f"    Old Target: INR {sell_target:,.2f}  ->  New Target: INR {mod_res['sell_target']:,.2f}"
+    )
+
+    # Part 4: Execute Partial Sell (Sell 40 shares at profit price 1850.00)
+    print("\n[4] Executing Partial Sale (Tranche 1: Sell 40 Shares at INR 1,850.00):")
+    partial_res = engine.partial_close_trade(
+        trade_id=trade_id,
+        sell_quantity=40,
+        exit_price=1850.00,
+        exit_reason="PARTIAL_PROFIT_TAKING",
+    )
+    print(f"  Sold Quantity         : {partial_res['sold_quantity']} shares")
+    print(f"  Exit Execution Price  : INR {partial_res['exit_price']:,.2f}")
+    print(
+        f"  Realized PnL          : INR {partial_res['realized_pnl']:+,.2f} "
+        f"({partial_res['return_pct']:+.2f}%)"
+    )
+    print(f"  Capital Returned      : INR {partial_res['capital_returned']:,.2f}")
+    print(f"  Remaining Active Qty  : {partial_res['remaining_quantity']} shares")
+    print(f"  Updated Portfolio Cash: INR {partial_res['updated_cash']:,.2f}")
+    print(f"  Closed Tranche ID     : Trade #{partial_res['closed_trade_id']}")
+
+    # Part 5: Execute Final Close of Remaining 60 shares
+    print("\n[5] Executing Final Liquidation of Remaining 60 Shares at INR 1,880.00:")
+    final_res = engine.partial_close_trade(
+        trade_id=trade_id,
+        sell_quantity=60,
+        exit_price=1880.00,
+        exit_reason="FINAL_TARGET_EXIT",
+    )
+    print(f"  Closed Final Qty      : {final_res['quantity']} shares")
+    print(f"  Exit Execution Price  : INR {final_res['exit_price']:,.2f}")
+    print(
+        f"  Realized PnL          : INR {final_res['realized_pnl']:+,.2f} "
+        f"({final_res['return_pct']:+.2f}%)"
+    )
+    print(f"  Final Updated Cash    : INR {final_res['updated_cash']:,.2f}")
+
+    print("\n[6] Portfolio Summary State Verification:")
+    summary = engine.get_portfolio_summary()
+    print(f"  Available Cash        : INR {summary['cash_balance']:>12,.2f}")
+    print(f"  Open Positions Value  : INR {summary['open_positions_value']:>12,.2f}")
+    print(f"  Total Realized PnL    : INR {summary['total_realized_pnl']:>12,.2f}")
+    print(f"  Total Portfolio Worth : INR {summary['total_portfolio_value']:>12,.2f}")
+
+    # Part 7: Cleanup Showcase Data to Preserve Database Integrity
+    with engine._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM paper_trades WHERE trade_id IN (?, ?)",
+            (trade_id, partial_res['closed_trade_id']),
+        )
+        cursor.execute(
+            "UPDATE paper_portfolio SET cash_balance = ? WHERE id = 1",
+            (initial_cash,),
+        )
+        conn.commit()
+    print("\n[7] Showcase Cleanup:")
+    print(f"  Demonstration trades removed; cash preserved at INR {initial_cash:,.2f}.")
+    print("=" * 85)
+
+
 def example_nifty_dual_momentum_breakout() -> None:
     """Showcase Nifty Dual Momentum Breakout strategy for hourly Nifty 50 cash stocks.
 
@@ -1219,6 +1342,12 @@ def main() -> None:
         or "--verify-stops" in sys.argv
     ):
         example_entry_stop_loss()
+    elif (
+        "--paper-enhancements" in sys.argv
+        or "--paper-trading-enhancements" in sys.argv
+        or "--paper-mods" in sys.argv
+    ):
+        example_paper_trading_enhancements()
     elif (
         "--paper-trading" in sys.argv
         or "--paper" in sys.argv

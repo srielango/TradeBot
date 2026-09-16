@@ -14,6 +14,7 @@ from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QCompleter,
     QDoubleSpinBox,
     QFrame,
     QGridLayout,
@@ -36,6 +37,7 @@ from paper_trading_engine import (
     PaperTradingEngine,
     PositionSizingError,
 )
+from ui.paper_trading_dialogs import ModifyPositionDialog, PartialSellDialog
 
 
 class PaperTradingWorker(QThread):
@@ -253,12 +255,25 @@ class PaperTradingTab(QWidget):
         form_layout = QVBoxLayout(group)
         form_layout.setSpacing(8)
 
-        # 1. Ticker Selection
+        # 1. Ticker Selection (Type to search Nifty 50 stocks)
         form_layout.addWidget(QLabel("<b>Nifty 50 Security:</b>"))
         self.ticker_combo = QComboBox()
         self.ticker_combo.setEditable(True)
         self.ticker_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self._populate_tickers()
+
+        # Configure QCompleter for substring / contains typing search
+        completer = self.ticker_combo.completer()
+        if completer:
+            completer.setFilterMode(Qt.MatchFlag.MatchContains)
+            completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+            completer.activated[str].connect(self._on_completer_activated)
+
+        if self.ticker_combo.lineEdit():
+            self.ticker_combo.lineEdit().setPlaceholderText("Type symbol or name to search...")
+            self.ticker_combo.lineEdit().editingFinished.connect(self._on_ticker_editing_finished)
+
         self.ticker_combo.currentIndexChanged.connect(self._on_ticker_changed)
         form_layout.addWidget(self.ticker_combo)
 
@@ -403,7 +418,7 @@ class PaperTradingTab(QWidget):
             "Market Val (₹)",
             "PnL (₹)",
             "PnL (%)",
-            "Action",
+            "Actions",
         ]
         self.table_open.setColumnCount(len(open_headers))
         self.table_open.setHorizontalHeaderLabels(open_headers)
@@ -496,6 +511,75 @@ class PaperTradingTab(QWidget):
         if idx >= 0:
             self.ticker_combo.setCurrentIndex(idx)
 
+    def _on_completer_activated(self, text: str) -> None:
+        """Handle selection from auto-completer popup list."""
+        idx = self.ticker_combo.findText(text)
+        if idx >= 0:
+            self.ticker_combo.setCurrentIndex(idx)
+        self.recalculate_position_size()
+
+    def _on_ticker_editing_finished(self) -> None:
+        """Resolve typed text when user presses Enter or leaves ticker field."""
+        raw_text = self.ticker_combo.currentText().strip()
+        if not raw_text:
+            return
+
+        if self.ticker_combo.currentIndex() >= 0:
+            if raw_text == self.ticker_combo.itemText(self.ticker_combo.currentIndex()):
+                return
+
+        resolved_ticker = self._resolve_ticker_from_text(raw_text)
+        if resolved_ticker:
+            idx = self.ticker_combo.findData(resolved_ticker)
+            if idx >= 0:
+                self.ticker_combo.setCurrentIndex(idx)
+        self.recalculate_position_size()
+
+    def _resolve_ticker_from_text(self, text: str) -> str | None:
+        """Find matching ticker from user-entered text (ticker symbol or company name).
+
+        Args:
+            text (str): Query string entered by user.
+
+        Returns:
+            str | None: Resolved clean ticker symbol or None.
+        """
+        clean = text.strip().upper()
+        if not clean:
+            return None
+
+        # 1. Exact ticker match (with or without .NS)
+        for i in range(self.ticker_combo.count()):
+            data = str(self.ticker_combo.itemData(i)).upper()
+            if data == clean or data == f"{clean}.NS" or data.replace(".NS", "") == clean:
+                return str(self.ticker_combo.itemData(i))
+
+        # 2. Substring match in display text (e.g. 'Tata Motors' or 'RELIANCE')
+        for i in range(self.ticker_combo.count()):
+            item_label = self.ticker_combo.itemText(i).upper()
+            if clean in item_label:
+                return str(self.ticker_combo.itemData(i))
+
+        return None
+
+    def _get_selected_ticker(self) -> str:
+        """Extract valid selected ticker symbol from combo box data or line edit text.
+
+        Returns:
+            str: Resolved ticker symbol (e.g., 'RELIANCE.NS').
+        """
+        curr_text = self.ticker_combo.currentText().strip()
+        if curr_text:
+            resolved = self._resolve_ticker_from_text(curr_text)
+            if resolved:
+                return resolved
+
+        curr_data = self.ticker_combo.currentData()
+        if curr_data:
+            return str(curr_data)
+
+        return curr_text.split(" ")[0].upper()
+
     def _on_ticker_changed(self) -> None:
         """Handle stock selection change."""
         self.recalculate_position_size()
@@ -507,9 +591,7 @@ class PaperTradingTab(QWidget):
 
     def fetch_cmp_for_selected(self) -> None:
         """Fetch current market price for selected security and set as entry price."""
-        ticker = self.ticker_combo.currentData()
-        if not ticker:
-            ticker = self.ticker_combo.currentText().split(" ")[0]
+        ticker = self._get_selected_ticker()
         if not ticker:
             return
 
@@ -583,9 +665,12 @@ class PaperTradingTab(QWidget):
 
     def place_paper_order(self) -> None:
         """Validate inputs and place trade via engine."""
-        ticker = self.ticker_combo.currentData()
+        ticker = self._get_selected_ticker()
         if not ticker:
-            ticker = self.ticker_combo.currentText().split(" ")[0]
+            QMessageBox.warning(
+                self, "Invalid Security", "Please select or type a valid Nifty 50 stock."
+            )
+            return
 
         entry = self.spin_entry.value()
         sl = self.spin_sl.value()
@@ -642,6 +727,74 @@ class PaperTradingTab(QWidget):
                 f"Trade #{trade_id} ({report['ticker']}) closed at ₹{exit_price:,.2f}.\nRealized PnL: {pnl_str}",
             )
             self.refresh_all_views()
+
+    def open_modify_dialog(self, trade_id: int) -> None:
+        """Open modal dialog to update stop loss and target for a trade.
+
+        Args:
+            trade_id (int): Identifier of the trade to modify.
+        """
+        open_trades = {t["trade_id"]: t for t in self.engine.get_open_trades()}
+        trade = open_trades.get(trade_id)
+        if not trade:
+            QMessageBox.warning(self, "Trade Not Found", f"Trade #{trade_id} is no longer open.")
+            return
+
+        dialog = ModifyPositionDialog(self, trade=trade, engine=self.engine)
+        if dialog.exec() == ModifyPositionDialog.DialogCode.Accepted and dialog.updated_result:
+            res = dialog.updated_result
+            target_str = f"₹{res['sell_target']:,.2f}" if res["sell_target"] else "Disabled"
+            self.refresh_all_views()
+            self.lbl_status.setText(
+                f"Trade #{trade_id} ({res['ticker']}) updated: "
+                f"SL=₹{res['stop_loss']:,.2f}, Target={target_str}"
+            )
+            QMessageBox.information(
+                self,
+                "Position Modified",
+                f"Trade #{trade_id} ({res['ticker']}) updated successfully!\n\n"
+                f"New Stop Loss: ₹{res['stop_loss']:,.2f}\n"
+                f"New Sell Target: {target_str}",
+            )
+
+    def open_partial_sell_dialog(self, trade_id: int) -> None:
+        """Open modal dialog to sell a partial quantity of an active position.
+
+        Args:
+            trade_id (int): Identifier of the trade to partially exit.
+        """
+        open_trades = {t["trade_id"]: t for t in self.engine.get_open_trades()}
+        trade = open_trades.get(trade_id)
+        if not trade:
+            QMessageBox.warning(self, "Trade Not Found", f"Trade #{trade_id} is no longer open.")
+            return
+
+        dialog = PartialSellDialog(self, trade=trade, engine=self.engine)
+        if dialog.exec() == PartialSellDialog.DialogCode.Accepted and dialog.partial_result:
+            res = dialog.partial_result
+            pnl = res["realized_pnl"]
+            pnl_str = f"+₹{pnl:,.2f}" if pnl >= 0 else f"-₹{abs(pnl):,.2f}"
+            self.refresh_all_views()
+
+            sold_qty = res.get("sold_quantity", res.get("quantity"))
+            cap_ret = res.get(
+                "capital_returned", res.get("quantity", 0) * res["exit_price"]
+            )
+            remain_qty = res.get("remaining_quantity", 0)
+
+            msg = (
+                f"Successfully sold {sold_qty} shares of {res['ticker']} "
+                f"at ₹{res['exit_price']:,.2f}.\n\n"
+                f"Realized PnL: {pnl_str} ({res['return_pct']:+.2f}%)\n"
+                f"Capital Returned: ₹{cap_ret:,.2f}\n"
+                f"Remaining Shares: {remain_qty}\n"
+                f"Updated Cash Balance: ₹{res['updated_cash']:,.2f}"
+            )
+            self.lbl_status.setText(
+                f"Trade #{trade_id} partial exit: sold {sold_qty} shares "
+                f"@ ₹{res['exit_price']:,.2f}"
+            )
+            QMessageBox.information(self, "Partial Sell Executed", msg)
 
     def confirm_reset_portfolio(self) -> None:
         """Show confirmation and reset portfolio balance to INR 5,00,000."""
@@ -732,17 +885,55 @@ class PaperTradingTab(QWidget):
                     item.setForeground(pnl_color)
                 self.table_open.setItem(row_idx, col_idx, item)
 
-            # Square Off Action Button
-            btn_close = QPushButton("Square Off")
-            btn_close.setStyleSheet(
-                "QPushButton { background-color: #4b5263; color: #ffffff; font-size: 11px; "
-                "padding: 3px 6px; border-radius: 3px; } "
-                "QPushButton:hover { background-color: #e06c75; }"
+            # Actions Container Widget (Modify, Sell Partial, Exit)
+            actions_widget = QWidget()
+            actions_layout = QHBoxLayout(actions_widget)
+            actions_layout.setContentsMargins(4, 2, 4, 2)
+            actions_layout.setSpacing(4)
+
+            # 1. Modify Stop Loss & Target Button
+            btn_modify = QPushButton("✏ Modify")
+            btn_modify.setStyleSheet(
+                "QPushButton { background-color: #2c313a; color: #61afef; "
+                "font-size: 11px; padding: 3px 6px; border: 1px solid #3b4048; "
+                "border-radius: 3px; font-weight: bold; } "
+                "QPushButton:hover { background-color: #3e4451; color: #ffffff; }"
             )
+            btn_modify.setToolTip("Modify Stop Loss and Target price levels")
+            btn_modify.clicked.connect(
+                lambda _checked=False, tid=trade_id: self.open_modify_dialog(tid)
+            )
+            actions_layout.addWidget(btn_modify)
+
+            # 2. Sell Partial Quantity Button
+            btn_partial = QPushButton("✂ Sell Partial")
+            btn_partial.setStyleSheet(
+                "QPushButton { background-color: #2c313a; color: #e5c07b; "
+                "font-size: 11px; padding: 3px 6px; border: 1px solid #3b4048; "
+                "border-radius: 3px; font-weight: bold; } "
+                "QPushButton:hover { background-color: #3e4451; color: #ffffff; }"
+            )
+            btn_partial.setToolTip("Sell a partial quantity of this position")
+            btn_partial.clicked.connect(
+                lambda _checked=False, tid=trade_id: self.open_partial_sell_dialog(tid)
+            )
+            actions_layout.addWidget(btn_partial)
+
+            # 3. Square Off Full Position Button
+            btn_close = QPushButton("✕ Exit")
+            btn_close.setStyleSheet(
+                "QPushButton { background-color: #3b2020; color: #e06c75; "
+                "font-size: 11px; padding: 3px 6px; border: 1px solid #5c2828; "
+                "border-radius: 3px; font-weight: bold; } "
+                "QPushButton:hover { background-color: #e06c75; color: #ffffff; }"
+            )
+            btn_close.setToolTip("Square off full position at current market price")
             btn_close.clicked.connect(
                 lambda _checked=False, tid=trade_id: self.manual_square_off(tid)
             )
-            self.table_open.setCellWidget(row_idx, 11, btn_close)
+            actions_layout.addWidget(btn_close)
+
+            self.table_open.setCellWidget(row_idx, 11, actions_widget)
 
         # 3. Populate Trade History Journal Table
         history_trades = self.engine.get_trade_history()

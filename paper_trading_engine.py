@@ -394,6 +394,230 @@ class PaperTradingEngine:
             "updated_cash": new_cash,
         }
 
+    def update_trade_sl_and_target(
+        self,
+        trade_id: int,
+        stop_loss: float,
+        sell_target: float | None = None,
+    ) -> dict[str, Any]:
+        """Update stop loss and optional profit target for an active open trade.
+
+        Args:
+            trade_id (int): Identifier of the active trade.
+            stop_loss (float): New stop loss price level (must be strictly positive).
+            sell_target (float | None): New sell target price level, or None to clear target.
+
+        Returns:
+            dict[str, Any]: Updated trade record information.
+
+        Raises:
+            ValueError: If trade does not exist, is closed, or prices violate trading logic.
+        """
+        if stop_loss <= 0:
+            raise ValueError("Stop loss must be strictly positive.")
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM paper_trades WHERE trade_id = ?", (trade_id,))
+            trade = cursor.fetchone()
+
+            if trade is None:
+                raise ValueError(f"Trade ID #{trade_id} does not exist.")
+            if trade["status"] != "OPEN":
+                raise ValueError(f"Trade ID #{trade_id} is already CLOSED.")
+
+            curr_price = float(trade["current_price"])
+            side = str(trade["side"])
+
+            if side == "BUY":
+                if stop_loss >= curr_price:
+                    raise ValueError(
+                        f"Stop loss (₹{stop_loss:,.2f}) must be strictly below current "
+                        f"market price (₹{curr_price:,.2f}) for BUY trade."
+                    )
+                if sell_target is not None:
+                    if sell_target <= curr_price:
+                        raise ValueError(
+                            f"Sell target (₹{sell_target:,.2f}) must be strictly above current "
+                            f"market price (₹{curr_price:,.2f}) for BUY trade."
+                        )
+                    if sell_target <= stop_loss:
+                        raise ValueError(
+                            f"Sell target (₹{sell_target:,.2f}) must be strictly greater than "
+                            f"stop loss (₹{stop_loss:,.2f})."
+                        )
+
+            cursor.execute(
+                """
+                UPDATE paper_trades
+                SET stop_loss = ?, sell_target = ?
+                WHERE trade_id = ?
+                """,
+                (stop_loss, sell_target, trade_id),
+            )
+            conn.commit()
+
+        return {
+            "trade_id": trade_id,
+            "ticker": str(trade["ticker"]),
+            "stop_loss": stop_loss,
+            "sell_target": sell_target,
+            "current_price": curr_price,
+            "quantity": int(trade["quantity"]),
+        }
+
+    def partial_close_trade(
+        self,
+        trade_id: int,
+        sell_quantity: int,
+        exit_price: float | None = None,
+        exit_reason: str = "PARTIAL_EXIT",
+    ) -> dict[str, Any]:
+        """Sell a partial quantity of an active open trade, realizing PnL and crediting capital.
+
+        If sell_quantity equals total open quantity, executes a full trade closure.
+
+        Args:
+            trade_id (int): Identifier of the trade to partially exit.
+            sell_quantity (int): Number of shares to sell (must be >= 1 and <= open quantity).
+            exit_price (float | None): Exit execution price (defaults to current_price if None).
+            exit_reason (str): Reason for partial exit (defaults to 'PARTIAL_EXIT').
+
+        Returns:
+            dict[str, Any]: Summary of partial exit execution and remaining position state.
+
+        Raises:
+            ValueError: If trade is invalid, closed, or sell_quantity exceeds open quantity.
+        """
+        if sell_quantity <= 0:
+            raise ValueError("Sell quantity must be strictly greater than 0.")
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM paper_trades WHERE trade_id = ?", (trade_id,))
+            trade = cursor.fetchone()
+
+            if trade is None:
+                raise ValueError(f"Trade ID #{trade_id} does not exist.")
+            if trade["status"] != "OPEN":
+                raise ValueError(f"Trade ID #{trade_id} is already CLOSED.")
+
+            open_qty = int(trade["quantity"])
+            if sell_quantity > open_qty:
+                raise ValueError(
+                    f"Requested sell quantity ({sell_quantity}) exceeds available "
+                    f"position quantity ({open_qty}) for Trade #{trade_id}."
+                )
+
+        # If selling the entire remaining quantity, delegate to full close_trade
+        if sell_quantity == open_qty:
+            resolved_exit = (
+                exit_price
+                if exit_price is not None and exit_price > 0
+                else float(trade["current_price"])
+            )
+            return self.close_trade(
+                trade_id=trade_id,
+                exit_price=resolved_exit,
+                exit_reason=exit_reason,
+            )
+
+        # Otherwise perform partial sale
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            entry_price = float(trade["entry_price"])
+            ticker = str(trade["ticker"])
+            side = str(trade["side"])
+            stop_loss = float(trade["stop_loss"])
+            sell_target = (
+                float(trade["sell_target"]) if trade["sell_target"] is not None else None
+            )
+
+            resolved_exit = (
+                exit_price
+                if exit_price is not None and exit_price > 0
+                else float(trade["current_price"])
+            )
+
+            if side == "BUY":
+                realized_pnl = sell_quantity * (resolved_exit - entry_price)
+                capital_returned = sell_quantity * resolved_exit
+            else:
+                realized_pnl = sell_quantity * (entry_price - resolved_exit)
+                capital_returned = (sell_quantity * entry_price) + realized_pnl
+
+            remaining_qty = open_qty - sell_quantity
+            exit_timestamp = (
+                datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            )
+            formatted_reason = f"{exit_reason} (Trade #{trade_id})"
+
+            # 1. Insert closed tranche into journal
+            cursor.execute(
+                """
+                INSERT INTO paper_trades (
+                    timestamp, ticker, side, entry_price, current_price,
+                    exit_price, quantity, stop_loss, sell_target,
+                    status, realized_pnl, exit_timestamp, exit_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'CLOSED', ?, ?, ?)
+                """,
+                (
+                    trade["timestamp"],
+                    ticker,
+                    side,
+                    entry_price,
+                    resolved_exit,
+                    resolved_exit,
+                    sell_quantity,
+                    stop_loss,
+                    sell_target,
+                    realized_pnl,
+                    exit_timestamp,
+                    formatted_reason,
+                ),
+            )
+            closed_trade_id = cursor.lastrowid
+
+            # 2. Update remaining active trade
+            cursor.execute(
+                """
+                UPDATE paper_trades
+                SET quantity = ?, current_price = ?
+                WHERE trade_id = ?
+                """,
+                (remaining_qty, resolved_exit, trade_id),
+            )
+
+            # 3. Credit capital returned to available cash balance
+            cursor.execute("SELECT cash_balance FROM paper_portfolio WHERE id = 1")
+            current_cash = float(cursor.fetchone()["cash_balance"])
+            new_cash = current_cash + capital_returned
+
+            cursor.execute(
+                "UPDATE paper_portfolio SET cash_balance = ?, updated_at = ? WHERE id = 1",
+                (new_cash, exit_timestamp),
+            )
+            conn.commit()
+
+        return {
+            "trade_id": trade_id,
+            "closed_trade_id": closed_trade_id,
+            "ticker": ticker,
+            "side": side,
+            "sold_quantity": sell_quantity,
+            "remaining_quantity": remaining_qty,
+            "entry_price": entry_price,
+            "exit_price": resolved_exit,
+            "realized_pnl": realized_pnl,
+            "return_pct": (
+                (resolved_exit - entry_price) / entry_price * 100.0 if entry_price > 0 else 0.0
+            ),
+            "capital_returned": capital_returned,
+            "exit_timestamp": exit_timestamp,
+            "exit_reason": formatted_reason,
+            "updated_cash": new_cash,
+        }
+
     def evaluate_open_trades(self, price_map: dict[str, float]) -> list[dict[str, Any]]:
         """Evaluate all open trades against the latest market prices for exit triggers.
 
