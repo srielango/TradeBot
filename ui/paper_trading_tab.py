@@ -408,6 +408,7 @@ class PaperTradingTab(QWidget):
         self.table_open = QTableWidget()
         open_headers = [
             "Trade ID",
+            "Entry Date",
             "Ticker",
             "Qty",
             "Entry (₹)",
@@ -430,7 +431,7 @@ class PaperTradingTab(QWidget):
         open_header = self.table_open.horizontalHeader()
         for idx in range(len(open_headers)):
             open_header.setSectionResizeMode(idx, QHeaderView.ResizeMode.ResizeToContents)
-        open_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        open_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
 
         open_layout.addWidget(self.table_open)
         layout.addWidget(open_group, stretch=1)
@@ -448,7 +449,8 @@ class PaperTradingTab(QWidget):
         self.table_history = QTableWidget()
         history_headers = [
             "Trade ID",
-            "Timestamp",
+            "Entry Date",
+            "Exit Date",
             "Ticker",
             "Side",
             "Qty",
@@ -469,7 +471,7 @@ class PaperTradingTab(QWidget):
         history_header = self.table_history.horizontalHeader()
         for idx in range(len(history_headers)):
             history_header.setSectionResizeMode(idx, QHeaderView.ResizeMode.ResizeToContents)
-        history_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        history_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
 
         history_layout.addWidget(self.table_history)
         layout.addWidget(history_group, stretch=1)
@@ -524,9 +526,11 @@ class PaperTradingTab(QWidget):
         if not raw_text:
             return
 
-        if self.ticker_combo.currentIndex() >= 0:
-            if raw_text == self.ticker_combo.itemText(self.ticker_combo.currentIndex()):
-                return
+        if (
+            self.ticker_combo.currentIndex() >= 0
+            and raw_text == self.ticker_combo.itemText(self.ticker_combo.currentIndex())
+        ):
+            return
 
         resolved_ticker = self._resolve_ticker_from_text(raw_text)
         if resolved_ticker:
@@ -858,8 +862,10 @@ class PaperTradingTab(QWidget):
             pnl_pct = trade["pnl_pct"]
             pnl_color = QColor("#98c379") if pnl >= 0 else QColor("#e06c75")
 
+            entry_d = trade.get("entry_date") or trade["timestamp"][:10]
             items = [
                 QTableWidgetItem(f"#{trade_id}"),
+                QTableWidgetItem(entry_d),
                 QTableWidgetItem(trade["ticker"]),
                 QTableWidgetItem(str(trade["quantity"])),
                 QTableWidgetItem(f"₹{trade['entry_price']:,.2f}"),
@@ -878,10 +884,10 @@ class PaperTradingTab(QWidget):
             for col_idx, item in enumerate(items):
                 item.setTextAlignment(
                     Qt.AlignmentFlag.AlignRight
-                    if col_idx in [2, 3, 4, 5, 6, 7, 8, 9, 10]
+                    if col_idx in [3, 4, 5, 6, 7, 8, 9, 10, 11]
                     else Qt.AlignmentFlag.AlignCenter
                 )
-                if col_idx in [9, 10]:
+                if col_idx in [10, 11]:
                     item.setForeground(pnl_color)
                 self.table_open.setItem(row_idx, col_idx, item)
 
@@ -933,7 +939,7 @@ class PaperTradingTab(QWidget):
             )
             actions_layout.addWidget(btn_close)
 
-            self.table_open.setCellWidget(row_idx, 11, actions_widget)
+            self.table_open.setCellWidget(row_idx, 12, actions_widget)
 
         # 3. Populate Trade History Journal Table
         history_trades = self.engine.get_trade_history()
@@ -944,9 +950,12 @@ class PaperTradingTab(QWidget):
             ret_pct = float(trade["return_pct"])
             pnl_color = QColor("#98c379") if pnl >= 0 else QColor("#e06c75")
 
+            entry_d = trade.get("entry_date") or trade["timestamp"][:10]
+            exit_d = trade.get("exit_date") or (trade.get("exit_timestamp") or "")[:10]
             items = [
                 QTableWidgetItem(f"#{trade['trade_id']}"),
-                QTableWidgetItem(trade["timestamp"][:16]),
+                QTableWidgetItem(entry_d),
+                QTableWidgetItem(exit_d if exit_d else "—"),
                 QTableWidgetItem(trade["ticker"]),
                 QTableWidgetItem(trade["side"]),
                 QTableWidgetItem(str(trade["quantity"])),
@@ -963,10 +972,10 @@ class PaperTradingTab(QWidget):
             for col_idx, item in enumerate(items):
                 item.setTextAlignment(
                     Qt.AlignmentFlag.AlignRight
-                    if col_idx in [4, 5, 6, 7, 8]
+                    if col_idx in [5, 6, 7, 8, 9]
                     else Qt.AlignmentFlag.AlignCenter
                 )
-                if col_idx in [7, 8]:
+                if col_idx in [8, 9]:
                     item.setForeground(pnl_color)
                 self.table_history.setItem(row_idx, col_idx, item)
 

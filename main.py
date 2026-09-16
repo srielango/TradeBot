@@ -15,6 +15,11 @@ from entry_stop_loss_validator import validate_entry_stop_losses
 from fundamental_screener import FundamentalScreener
 from market_repository import MarketRepository
 from morning_scanner import MorningScanner
+from paper_trade_cagr import (
+    calculate_portfolio_cagr,
+    calculate_trade_cagr,
+    generate_cagr_report,
+)
 from paper_trading_engine import PaperTradingEngine
 from rsi_indicator import analyze_rsi
 from strategies.adx_ema_swing import (
@@ -1170,6 +1175,143 @@ def example_paper_trading_enhancements() -> None:
     print("=" * 85)
 
 
+def example_paper_trading_cagr() -> None:
+    """Showcase Paper Trading Entry/Exit dates persistence and CAGR calculation.
+
+    Demonstrates:
+    1. Database schema migration: Verification of entry_date and exit_date columns.
+    2. Preservation of existing records: Verification that open positions have today's date as entry_date.
+    3. Order placement and closure: Recording entry_date and exit_date on new orders.
+    4. Individual Trade CAGR: Holding duration in calendar days and annualized returns.
+    5. Overall Portfolio CAGR: Seed capital vs net portfolio value evaluation.
+    """
+    print("=" * 90)
+    print("PAPER TRADING ENTRY/EXIT DATES & CAGR SHOWCASE")
+    print("=" * 90)
+    print("Key Highlights:")
+    print("  1. Schema Updates          : 'entry_date' and 'exit_date' columns in 'paper_trades'")
+    print("  2. Existing Records        : 100% preserved; open positions defaulted to today's date")
+    print("  3. Holding Duration        : Exact calendar days computed for each active and closed trade")
+    print("  4. CAGR Calculation        : Annualized Compound Growth Rate for trades and portfolio")
+    print("-" * 90)
+
+    engine = PaperTradingEngine()
+
+    # Part 1: Schema Verification
+    print("\n[1] Database Schema Verification (table: 'paper_trades'):")
+    with engine._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(paper_trades)")
+        columns = [row["name"] for row in cursor.fetchall()]
+        print(f"  Total Columns: {len(columns)}")
+        print(f"  'entry_date' Present: {'entry_date' in columns}")
+        print(f"  'exit_date' Present : {'exit_date' in columns}")
+
+    # Part 2: Existing Open Positions Verification
+    print("\n[2] Existing Open Positions in Database (Preserved with Default Entry Date):")
+    open_trades = engine.get_open_trades()
+    print(f"  Found {len(open_trades)} active open position(s):")
+    for t in open_trades:
+        print(
+            f"  Trade #{t['trade_id']}: {t['quantity']} shares of {t['ticker']} | "
+            f"Entry Date: {t['entry_date']} | Holding Days: {t['holding_days']} | "
+            f"Entry: INR {t['entry_price']:,.2f} | CMP: INR {t['current_price']:,.2f} | "
+            f"Unrealized PnL: INR {t['unrealized_pnl']:+,.2f} ({t['pnl_pct']:+.2f}%)"
+        )
+
+    # Part 3: Live Order Placement & Execution Demonstration with Entry/Exit Dates
+    print("\n[3] Executing Showcase Trade with Explicit Entry Date & Exit Date:")
+    initial_cash = engine.get_cash_balance()
+    test_ticker = "TCS.NS"
+    entry_price = 3200.00
+    stop_loss = 3100.00
+    sell_target = 3400.00
+    order = engine.place_order(
+        ticker=test_ticker,
+        entry_price=entry_price,
+        stop_loss=stop_loss,
+        sell_target=sell_target,
+        override_quantity=20,
+    )
+    trade_id = order["trade_id"]
+    print(
+        f"  Opened Trade #{trade_id}: {order['quantity']} shares of {order['ticker']} "
+        f"@ INR {order['entry_price']:,.2f}"
+    )
+    print(f"  Recorded Entry Date   : {order['entry_date']}")
+    print(f"  Remaining Cash        : INR {order['remaining_cash']:,.2f}")
+
+    # Partial close to demonstrate tranche split with date inheritance
+    print("\n[4] Partial Closure (Sell 10 shares at INR 3,300.00):")
+    partial_res = engine.partial_close_trade(
+        trade_id=trade_id,
+        sell_quantity=10,
+        exit_price=3300.00,
+        exit_reason="CAGR_SHOWCASE_PARTIAL",
+    )
+    print(
+        f"  Closed Tranche #{partial_res['closed_trade_id']}: {partial_res['sold_quantity']} shares | "
+        f"Entry Date: {partial_res['entry_date']} | Exit Date: {partial_res['exit_date']}"
+    )
+    print(
+        f"  Realized PnL: INR {partial_res['realized_pnl']:+,.2f} "
+        f"({partial_res['return_pct']:+.2f}%)"
+    )
+
+    # Full closure of remaining shares
+    print("\n[5] Final Closure (Sell remaining 10 shares at INR 3,350.00):")
+    final_res = engine.close_trade(
+        trade_id=trade_id,
+        exit_price=3350.00,
+        exit_reason="CAGR_SHOWCASE_FINAL",
+    )
+    print(
+        f"  Closed Trade #{final_res['trade_id']}: {final_res['quantity']} shares | "
+        f"Entry Date: {final_res['entry_date']} | Exit Date: {final_res['exit_date']}"
+    )
+    print(
+        f"  Realized PnL: INR {final_res['realized_pnl']:+,.2f} "
+        f"({final_res['return_pct']:+.2f}%)"
+    )
+
+    # Part 6: Trade-Level CAGR Calculation Breakdown
+    print("\n[6] Trade-Level CAGR Calculation Example:")
+    cagr_sample = calculate_trade_cagr(
+        entry_price=3200.00,
+        exit_price=3350.00,
+        entry_date="2026-06-16",
+        exit_date="2026-09-16",
+    )
+    print(f"  Entry Price       : INR 3,200.00 ({cagr_sample['entry_date']})")
+    print(f"  Exit Price        : INR 3,350.00 ({cagr_sample['exit_date']})")
+    print(f"  Holding Duration  : {cagr_sample['holding_days']} days ({cagr_sample['duration_years']:.2f} yrs)")
+    print(f"  Absolute Return   : {cagr_sample['return_pct']:+.2f}%")
+    print(f"  Annualized CAGR   : {cagr_sample['cagr_pct']:+.2f}%")
+
+    # Cleanup demonstration trades to preserve database state
+    with engine._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM paper_trades WHERE trade_id IN (?, ?)",
+            (trade_id, partial_res["closed_trade_id"]),
+        )
+        cursor.execute(
+            "UPDATE paper_portfolio SET cash_balance = ? WHERE id = 1",
+            (initial_cash,),
+        )
+        conn.commit()
+    print("\n[7] Demonstration Trades Cleaned Up; Database Preserved.")
+
+    # Part 8: Comprehensive Portfolio CAGR Report
+    port_metrics = calculate_portfolio_cagr(engine)
+    print(
+        f"\n[8] Portfolio Metrics Summary: Net Worth INR {port_metrics['total_portfolio_value']:,.2f} | "
+        f"Portfolio CAGR: {port_metrics['portfolio_cagr_pct']:+.2f}%"
+    )
+    print("\n" + generate_cagr_report(engine))
+    print("=" * 90)
+
+
 def example_nifty_dual_momentum_breakout() -> None:
     """Showcase Nifty Dual Momentum Breakout strategy for hourly Nifty 50 cash stocks.
 
@@ -1342,6 +1484,12 @@ def main() -> None:
         or "--verify-stops" in sys.argv
     ):
         example_entry_stop_loss()
+    elif (
+        "--paper-cagr" in sys.argv
+        or "--cagr" in sys.argv
+        or "--paper-dates" in sys.argv
+    ):
+        example_paper_trading_cagr()
     elif (
         "--paper-enhancements" in sys.argv
         or "--paper-trading-enhancements" in sys.argv

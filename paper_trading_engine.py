@@ -8,7 +8,7 @@ and trade history journal logging for Nifty 50 securities.
 import math
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +62,7 @@ class PaperTradingEngine:
         CREATE TABLE IF NOT EXISTS paper_trades (
             trade_id INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp TEXT NOT NULL,
+            entry_date TEXT NOT NULL DEFAULT (DATE('now', 'localtime')),
             ticker TEXT NOT NULL,
             side TEXT CHECK(side IN ('BUY', 'SELL')) NOT NULL DEFAULT 'BUY',
             entry_price REAL NOT NULL,
@@ -73,6 +74,7 @@ class PaperTradingEngine:
             status TEXT CHECK(status IN ('OPEN', 'CLOSED')) NOT NULL DEFAULT 'OPEN',
             realized_pnl REAL DEFAULT 0.0,
             exit_timestamp TEXT,
+            exit_date TEXT,
             exit_reason TEXT
         );
         """
@@ -81,6 +83,42 @@ class PaperTradingEngine:
             cursor = conn.cursor()
             cursor.execute(create_portfolio_table)
             cursor.execute(create_trades_table)
+
+            # Schema migration: Ensure entry_date and exit_date columns exist
+            cursor.execute("PRAGMA table_info(paper_trades)")
+            existing_cols = {row["name"] for row in cursor.fetchall()}
+
+            if "entry_date" not in existing_cols:
+                cursor.execute("ALTER TABLE paper_trades ADD COLUMN entry_date TEXT")
+            if "exit_date" not in existing_cols:
+                cursor.execute("ALTER TABLE paper_trades ADD COLUMN exit_date TEXT")
+
+            # Set today's date as default entry_date for existing open positions
+            today_str = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d")
+            cursor.execute(
+                """
+                UPDATE paper_trades
+                SET entry_date = ?
+                WHERE status = 'OPEN' AND (entry_date IS NULL OR entry_date = '')
+                """,
+                (today_str,),
+            )
+
+            # Backfill any closed trades missing entry_date / exit_date
+            cursor.execute(
+                """
+                UPDATE paper_trades
+                SET entry_date = SUBSTR(timestamp, 1, 10)
+                WHERE status = 'CLOSED' AND (entry_date IS NULL OR entry_date = '')
+                """
+            )
+            cursor.execute(
+                """
+                UPDATE paper_trades
+                SET exit_date = SUBSTR(exit_timestamp, 1, 10)
+                WHERE status = 'CLOSED' AND (exit_date IS NULL OR exit_date = '') AND exit_timestamp IS NOT NULL
+                """
+            )
 
             # Seed starting balance if record does not exist
             cursor.execute("SELECT cash_balance FROM paper_portfolio WHERE id = 1")
@@ -196,6 +234,7 @@ class PaperTradingEngine:
         sell_target: float | None = None,
         side: str = "BUY",
         override_quantity: int | None = None,
+        entry_date: str | None = None,
     ) -> dict[str, Any]:
         """Validate, size, and execute an order in the paper trading system.
 
@@ -206,6 +245,7 @@ class PaperTradingEngine:
             sell_target (float | None): Optional profit target level.
             side (str): Order side, defaults to 'BUY'.
             override_quantity (int | None): Explicit quantity override if permitted.
+            entry_date (str | None): Date of entry (YYYY-MM-DD). Defaults to current date.
 
         Returns:
             dict[str, Any]: Trade confirmation details.
@@ -256,18 +296,25 @@ class PaperTradingEngine:
                     f"trade cost (INR {total_cost:,.2f})."
                 )
 
-            timestamp = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            now_dt = datetime.now(timezone.utc).astimezone()
+            timestamp = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+            actual_entry_date = (
+                str(entry_date).strip()
+                if entry_date
+                else now_dt.strftime("%Y-%m-%d")
+            )
 
             cursor.execute(
                 """
                 INSERT INTO paper_trades (
-                    timestamp, ticker, side, entry_price, current_price,
+                    timestamp, entry_date, ticker, side, entry_price, current_price,
                     exit_price, quantity, stop_loss, sell_target,
-                    status, realized_pnl, exit_timestamp, exit_reason
-                ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, 'OPEN', 0.0, NULL, NULL)
+                    status, realized_pnl, exit_timestamp, exit_date, exit_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'OPEN', 0.0, NULL, NULL, NULL)
                 """,
                 (
                     timestamp,
+                    actual_entry_date,
                     clean_ticker,
                     side,
                     entry_price,
@@ -290,6 +337,7 @@ class PaperTradingEngine:
         return {
             "trade_id": trade_id,
             "timestamp": timestamp,
+            "entry_date": actual_entry_date,
             "ticker": clean_ticker,
             "side": side,
             "entry_price": entry_price,
@@ -306,6 +354,7 @@ class PaperTradingEngine:
         trade_id: int,
         exit_price: float,
         exit_reason: str = "MANUAL_EXIT",
+        exit_date: str | None = None,
     ) -> dict[str, Any]:
         """Close an active paper trade, compute realized PnL, and credit capital.
 
@@ -313,6 +362,7 @@ class PaperTradingEngine:
             trade_id (int): Identifier of the trade to close.
             exit_price (float): Final execution exit price.
             exit_reason (str): Reason for closure ('STOP_LOSS', 'SELL_TARGET', 'MANUAL_EXIT').
+            exit_date (str | None): Date of exit (YYYY-MM-DD). Defaults to current date.
 
         Returns:
             dict[str, Any]: Closed trade summary and updated cash balance.
@@ -334,6 +384,11 @@ class PaperTradingEngine:
             entry_price = float(trade["entry_price"])
             ticker = str(trade["ticker"])
             side = str(trade["side"])
+            entry_d = (
+                str(trade.get("entry_date")).strip()
+                if trade.get("entry_date")
+                else str(trade["timestamp"])[:10]
+            )
 
             # Compute realized PnL
             if side == "BUY":
@@ -343,7 +398,13 @@ class PaperTradingEngine:
                 realized_pnl = quantity * (entry_price - exit_price)
                 capital_returned = (quantity * entry_price) + realized_pnl
 
-            exit_timestamp = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            now_dt = datetime.now(timezone.utc).astimezone()
+            exit_timestamp = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+            actual_exit_date = (
+                str(exit_date).strip()
+                if exit_date
+                else now_dt.strftime("%Y-%m-%d")
+            )
 
             # Update trade record
             cursor.execute(
@@ -354,6 +415,7 @@ class PaperTradingEngine:
                     current_price = ?,
                     realized_pnl = ?,
                     exit_timestamp = ?,
+                    exit_date = ?,
                     exit_reason = ?
                 WHERE trade_id = ?
                 """,
@@ -362,6 +424,7 @@ class PaperTradingEngine:
                     exit_price,
                     realized_pnl,
                     exit_timestamp,
+                    actual_exit_date,
                     exit_reason,
                     trade_id,
                 ),
@@ -385,6 +448,8 @@ class PaperTradingEngine:
             "quantity": quantity,
             "entry_price": entry_price,
             "exit_price": exit_price,
+            "entry_date": entry_d,
+            "exit_date": actual_exit_date,
             "realized_pnl": realized_pnl,
             "return_pct": (
                 (exit_price - entry_price) / entry_price * 100.0 if entry_price > 0 else 0.0
@@ -472,6 +537,7 @@ class PaperTradingEngine:
         sell_quantity: int,
         exit_price: float | None = None,
         exit_reason: str = "PARTIAL_EXIT",
+        exit_date: str | None = None,
     ) -> dict[str, Any]:
         """Sell a partial quantity of an active open trade, realizing PnL and crediting capital.
 
@@ -482,6 +548,7 @@ class PaperTradingEngine:
             sell_quantity (int): Number of shares to sell (must be >= 1 and <= open quantity).
             exit_price (float | None): Exit execution price (defaults to current_price if None).
             exit_reason (str): Reason for partial exit (defaults to 'PARTIAL_EXIT').
+            exit_date (str | None): Date of exit (YYYY-MM-DD). Defaults to current date.
 
         Returns:
             dict[str, Any]: Summary of partial exit execution and remaining position state.
@@ -520,6 +587,7 @@ class PaperTradingEngine:
                 trade_id=trade_id,
                 exit_price=resolved_exit,
                 exit_reason=exit_reason,
+                exit_date=exit_date,
             )
 
         # Otherwise perform partial sale
@@ -547,8 +615,17 @@ class PaperTradingEngine:
                 capital_returned = (sell_quantity * entry_price) + realized_pnl
 
             remaining_qty = open_qty - sell_quantity
-            exit_timestamp = (
-                datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
+            now_dt = datetime.now(timezone.utc).astimezone()
+            exit_timestamp = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+            actual_exit_date = (
+                str(exit_date).strip()
+                if exit_date
+                else now_dt.strftime("%Y-%m-%d")
+            )
+            entry_d = (
+                str(trade.get("entry_date")).strip()
+                if trade.get("entry_date")
+                else str(trade["timestamp"])[:10]
             )
             formatted_reason = f"{exit_reason} (Trade #{trade_id})"
 
@@ -556,13 +633,14 @@ class PaperTradingEngine:
             cursor.execute(
                 """
                 INSERT INTO paper_trades (
-                    timestamp, ticker, side, entry_price, current_price,
+                    timestamp, entry_date, ticker, side, entry_price, current_price,
                     exit_price, quantity, stop_loss, sell_target,
-                    status, realized_pnl, exit_timestamp, exit_reason
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'CLOSED', ?, ?, ?)
+                    status, realized_pnl, exit_timestamp, exit_date, exit_reason
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'CLOSED', ?, ?, ?, ?)
                 """,
                 (
                     trade["timestamp"],
+                    entry_d,
                     ticker,
                     side,
                     entry_price,
@@ -573,6 +651,7 @@ class PaperTradingEngine:
                     sell_target,
                     realized_pnl,
                     exit_timestamp,
+                    actual_exit_date,
                     formatted_reason,
                 ),
             )
@@ -608,6 +687,8 @@ class PaperTradingEngine:
             "remaining_quantity": remaining_qty,
             "entry_price": entry_price,
             "exit_price": resolved_exit,
+            "entry_date": entry_d,
+            "exit_date": actual_exit_date,
             "realized_pnl": realized_pnl,
             "return_pct": (
                 (resolved_exit - entry_price) / entry_price * 100.0 if entry_price > 0 else 0.0
@@ -693,6 +774,7 @@ class PaperTradingEngine:
             cursor.execute(query)
             rows = cursor.fetchall()
             trades = []
+            today_d = datetime.now(timezone.utc).astimezone().date()
             for row in rows:
                 item = dict(row)
                 qty = item["quantity"]
@@ -704,6 +786,13 @@ class PaperTradingEngine:
                 item["pnl_pct"] = (
                     ((curr - entry) / entry * 100.0) if entry > 0 else 0.0
                 )
+                entry_d_str = item.get("entry_date") or (item.get("timestamp") or "")[:10]
+                item["entry_date"] = entry_d_str
+                try:
+                    e_d = date.fromisoformat(str(entry_d_str)[:10])
+                    item["holding_days"] = max(0, (today_d - e_d).days)
+                except (ValueError, TypeError):
+                    item["holding_days"] = 0
                 trades.append(item)
             return trades
 
@@ -719,6 +808,7 @@ class PaperTradingEngine:
             cursor.execute(query)
             rows = cursor.fetchall()
             history = []
+            today_d = datetime.now(timezone.utc).astimezone().date()
             for row in rows:
                 item = dict(row)
                 entry = item["entry_price"]
@@ -726,6 +816,20 @@ class PaperTradingEngine:
                 item["return_pct"] = (
                     ((exit_p - entry) / entry * 100.0) if entry > 0 else 0.0
                 )
+                entry_d_str = item.get("entry_date") or (item.get("timestamp") or "")[:10]
+                exit_d_str = item.get("exit_date") or (item.get("exit_timestamp") or "")[:10]
+                item["entry_date"] = entry_d_str
+                item["exit_date"] = exit_d_str
+                try:
+                    e_d = date.fromisoformat(str(entry_d_str)[:10])
+                    x_d = (
+                        date.fromisoformat(str(exit_d_str)[:10])
+                        if exit_d_str
+                        else today_d
+                    )
+                    item["holding_days"] = max(0, (x_d - e_d).days)
+                except (ValueError, TypeError):
+                    item["holding_days"] = 0
                 history.append(item)
             return history
 
