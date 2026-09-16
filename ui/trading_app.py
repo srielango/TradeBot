@@ -9,6 +9,7 @@ from plotly.subplots import make_subplots
 # pylint: disable=no-name-in-module
 # PyQt6 modules are compiled C/C++ extensions (.pyd), which static analyzers
 # like Pylint cannot inspect without dynamic loading.
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
     QApplication,
@@ -31,10 +32,12 @@ from PyQt6.QtWidgets import (
 from adx_indicator import calculate_adx
 from bollinger_bands import calculate_bollinger_bands
 from config import DB_PATH, TARGET_INDICES
+from data_sync_service import DataSyncService
 from market_repository import MarketRepository
 from rsi_indicator import calculate_rsi
 from stoch_rsi_indicator import calculate_stoch_rsi
 from ui.backtest_tab import BacktestTab
+from ui.data_sync_widget import DataSyncWidget
 from ui.fundamental_screener_tab import FundamentalScreenerTab
 from ui.morning_scanner_tab import MorningScannerTab
 from ui.paper_trading_tab import PaperTradingTab
@@ -65,6 +68,7 @@ class TradingApp(QMainWindow):
 
         self.init_ui()
         self.check_database_health()
+        self._setup_sync_listener()
 
     def init_ui(self):
         """Construct layout, sidebar controls, charts, and data tabs."""
@@ -82,6 +86,10 @@ class TradingApp(QMainWindow):
         sidebar_container.setFixedWidth(240)
         sidebar_container.setLayout(sidebar)
         chart_tab_layout.addWidget(sidebar_container)
+
+        # ── Data Synchronization Panel ───────────────────────────────────────
+        self.sync_widget = DataSyncWidget()
+        sidebar.addWidget(self.sync_widget)
 
         # ── Asset Watchlist ──────────────────────────────────────────────────
 
@@ -1214,8 +1222,46 @@ class TradingApp(QMainWindow):
                 'Connected to tradebot.db, but the "securities" table contains zero rows.',
             )
 
+    def _setup_sync_listener(self) -> None:
+        """Register callbacks for data synchronization events and schedule auto-sync."""
+        sync_service = DataSyncService.get_instance()
+        sync_service.sync_finished.connect(self._on_data_sync_completed)
+
+        # Trigger auto-sync on startup if preference is enabled
+        if sync_service.get_auto_sync_on_startup():
+            QTimer.singleShot(1500, self._trigger_startup_sync)
+
+    def _trigger_startup_sync(self) -> None:
+        """Initiate background synchronization on initial application launch."""
+        DataSyncService.get_instance().start_sync()
+
+    def _on_data_sync_completed(self, bars: int, funds: int, summary: str) -> None:
+        """Refresh active chart and ticker list when background synchronization completes.
+
+        Args:
+            bars (int): Count of newly added price bars.
+            funds (int): Count of updated fundamental records.
+            summary (str): Completed sync summary message.
+        """
+        if bars > 0:
+            current_selection = self.ticker_list.currentItem()
+            selected_text = current_selection.text() if current_selection else None
+            self._all_tickers = self.repo.get_tickers()
+            self.ticker_list.blockSignals(True)
+            self.ticker_list.clear()
+            self.ticker_list.addItems(self._all_tickers)
+            if selected_text:
+                items = self.ticker_list.findItems(
+                    selected_text, Qt.MatchFlag.MatchExactly
+                )
+                if items:
+                    self.ticker_list.setCurrentItem(items[0])
+            self.ticker_list.blockSignals(False)
+            self.refresh_chart()
+
     def closeEvent(self, event) -> None:
         """Clean up background workers and threads on application exit."""
+        DataSyncService.get_instance().cancel_sync()
         if hasattr(self, 'paper_trading_tab') and self.paper_trading_tab.worker:
             self.paper_trading_tab.worker.stop()
             self.paper_trading_tab.worker.wait(1500)

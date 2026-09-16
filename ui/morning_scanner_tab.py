@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from data_sync_service import DataSyncService
 from market_repository import MarketRepository
 from morning_scanner import MorningScanner
 from strategies import STRATEGY_REGISTRY
@@ -80,6 +81,7 @@ class MorningScannerTab(QWidget):
         self.filtered_results: list[dict[str, Any]] = []
 
         self.init_ui()
+        self._connect_sync_service()
         # Automatically run initial scan
         self.run_scanner()
 
@@ -164,6 +166,18 @@ class MorningScannerTab(QWidget):
         )
         self.btn_export_csv.clicked.connect(self.export_csv)
         search_actions_layout.addWidget(self.btn_export_csv)
+
+        self.btn_sync_data = QPushButton("⟳ Sync Data")
+        self.btn_sync_data.setToolTip("Synchronize latest market bars and fundamentals")
+        self.btn_sync_data.setStyleSheet(
+            "QPushButton { background-color: #2e7d32; color: white; font-weight: bold; "
+            "padding: 6px 12px; border-radius: 4px; border: 1px solid #388e3c; } "
+            "QPushButton:hover { background-color: #388e3c; } "
+            "QPushButton:disabled { background-color: #3b4048; color: #7f8c8d; "
+            "border: 1px solid #4b5263; }"
+        )
+        self.btn_sync_data.clicked.connect(self._on_sync_data_clicked)
+        search_actions_layout.addWidget(self.btn_sync_data)
 
         control_layout.addLayout(search_actions_layout, 1, 2, 1, 2)
 
@@ -563,3 +577,49 @@ class MorningScannerTab(QWidget):
             )
         except OSError as err:
             QMessageBox.critical(self, "Export Error", f"Failed to save CSV: {err}")
+
+    # ── Market Data Synchronization Handlers ─────────────────────────────────
+
+    def _connect_sync_service(self) -> None:
+        """Subscribe to DataSyncService events to update button status."""
+        sync_service = DataSyncService.get_instance()
+        sync_service.sync_started.connect(self._on_sync_started)
+        sync_service.progress_updated.connect(self._on_sync_progress)
+        sync_service.sync_finished.connect(self._on_sync_finished)
+        sync_service.sync_error.connect(self._on_sync_error)
+        sync_service.sync_cancelled.connect(self._on_sync_cancelled)
+
+    def _on_sync_data_clicked(self) -> None:
+        """Trigger background market data synchronization."""
+        DataSyncService.get_instance().start_sync()
+
+    def _on_sync_started(self) -> None:
+        """Update button when data synchronization begins."""
+        self.btn_sync_data.setEnabled(False)
+        self.btn_sync_data.setText("Syncing...")
+
+    def _on_sync_progress(self, current: int, total: int, _msg: str) -> None:
+        """Update button with synchronization progress percentage.
+
+        Args:
+            current (int): Current step index.
+            total (int): Total sync steps.
+            _msg (str): Informational step message (unused here).
+        """
+        pct = max(0, min(100, int((current / max(1, total)) * 100)))
+        self.btn_sync_data.setText(f"Syncing {pct}%")
+
+    def _on_sync_finished(self, _bars: int, _funds: int, _summary: str) -> None:
+        """Restore button state upon synchronization completion."""
+        self.btn_sync_data.setEnabled(True)
+        self.btn_sync_data.setText("⟳ Sync Data")
+
+    def _on_sync_error(self, _err: str) -> None:
+        """Restore button state on synchronization error."""
+        self.btn_sync_data.setEnabled(True)
+        self.btn_sync_data.setText("⟳ Sync Data")
+
+    def _on_sync_cancelled(self) -> None:
+        """Restore button state if synchronization was cancelled."""
+        self.btn_sync_data.setEnabled(True)
+        self.btn_sync_data.setText("⟳ Sync Data")

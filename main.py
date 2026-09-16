@@ -9,6 +9,8 @@ from PyQt6.QtWidgets import QApplication
 
 from adx_indicator import analyze_adx
 from back_test_engine import BacktestEngine
+from daily_data_updater import run_full_daily_update
+from data_sync_service import DataSyncService
 from entry_stop_loss_validator import validate_entry_stop_losses
 from fundamental_screener import FundamentalScreener
 from market_repository import MarketRepository
@@ -1171,6 +1173,37 @@ def example_entry_stop_loss() -> None:
     validate_entry_stop_losses(sample_size=20)
 
 
+def example_daily_data_updater() -> None:
+    """Showcase in-app daily market data synchronization and status checking."""
+    print("=" * 80)
+    print("DAILY MARKET DATA SYNCHRONIZATION SHOWCASE")
+    print("=" * 80)
+    service = DataSyncService.get_instance()
+    info = service.get_last_sync_info()
+    latest_bar = service.get_latest_bar_date()
+
+    print(f"Latest Database Bar Date    : {latest_bar or 'None'}")
+    print(f"Last Sync Timestamp         : {info.get('last_sync_timestamp') or 'Never'}")
+    print(f"Last Sync Status            : {info.get('last_sync_status')}")
+    print(f"Last Sync Bars Added        : {info.get('last_sync_bars', 0)}")
+    print(f"Last Sync Fundamentals      : {info.get('last_sync_funds', 0)}")
+    print(f"Auto-Sync On App Startup    : {service.get_auto_sync_on_startup()}")
+    print("-" * 80)
+    print("Executing sample data synchronization...")
+
+    def progress_printer(cur: int, tot: int, msg: str) -> None:
+        pct = int((cur / max(1, tot)) * 100)
+        print(f"[{pct:>3}%] ({cur:>3}/{tot}) {msg}")
+
+    bars, funds = run_full_daily_update(progress_callback=progress_printer)
+    print("=" * 80)
+    print(
+        f"Synchronization Complete! Added {bars} bars, "
+        f"updated {funds} stock fundamentals."
+    )
+    print("=" * 80)
+
+
 def main() -> None:
     """Initialize and showcase the primary application functionality."""
     if (
@@ -1231,6 +1264,12 @@ def main() -> None:
             else "previous_day"
         )
         example_morning_scanner(trigger_scope=scope)
+    elif (
+        "--sync" in sys.argv
+        or "--data-sync" in sys.argv
+        or "--updater" in sys.argv
+    ):
+        example_daily_data_updater()
     else:
         example_trading_dashboard()
 
