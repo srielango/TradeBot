@@ -373,12 +373,15 @@ class PaperTradingEngine:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM paper_trades WHERE trade_id = ?", (trade_id,))
-            trade = cursor.fetchone()
+            trade_row = cursor.fetchone()
 
-            if trade is None:
+            if trade_row is None:
                 raise ValueError(f"Trade ID #{trade_id} does not exist.")
-            if trade["status"] != "OPEN":
+            if trade_row["status"] != "OPEN":
                 raise ValueError(f"Trade ID #{trade_id} is already CLOSED.")
+
+            # Convert sqlite3.Row to standard dict to support .get() and safe key access
+            trade = dict(trade_row)
 
             quantity = int(trade["quantity"])
             entry_price = float(trade["entry_price"])
@@ -386,7 +389,7 @@ class PaperTradingEngine:
             side = str(trade["side"])
             entry_d = (
                 str(trade.get("entry_date")).strip()
-                if trade.get("entry_date")
+                if trade.get("entry_date") and str(trade.get("entry_date")).strip() not in ("", "None")
                 else str(trade["timestamp"])[:10]
             )
 
@@ -484,12 +487,15 @@ class PaperTradingEngine:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM paper_trades WHERE trade_id = ?", (trade_id,))
-            trade = cursor.fetchone()
+            trade_row = cursor.fetchone()
 
-            if trade is None:
+            if trade_row is None:
                 raise ValueError(f"Trade ID #{trade_id} does not exist.")
-            if trade["status"] != "OPEN":
+            if trade_row["status"] != "OPEN":
                 raise ValueError(f"Trade ID #{trade_id} is already CLOSED.")
+
+            # Convert sqlite3.Row to standard dict
+            trade = dict(trade_row)
 
             curr_price = float(trade["current_price"])
             side = str(trade["side"])
@@ -562,12 +568,15 @@ class PaperTradingEngine:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM paper_trades WHERE trade_id = ?", (trade_id,))
-            trade = cursor.fetchone()
+            trade_row = cursor.fetchone()
 
-            if trade is None:
+            if trade_row is None:
                 raise ValueError(f"Trade ID #{trade_id} does not exist.")
-            if trade["status"] != "OPEN":
+            if trade_row["status"] != "OPEN":
                 raise ValueError(f"Trade ID #{trade_id} is already CLOSED.")
+
+            # Convert sqlite3.Row to standard dict to support .get() and safe key access
+            trade = dict(trade_row)
 
             open_qty = int(trade["quantity"])
             if sell_quantity > open_qty:
@@ -624,7 +633,7 @@ class PaperTradingEngine:
             )
             entry_d = (
                 str(trade.get("entry_date")).strip()
-                if trade.get("entry_date")
+                if trade.get("entry_date") and str(trade.get("entry_date")).strip() not in ("", "None")
                 else str(trade["timestamp"])[:10]
             )
             formatted_reason = f"{exit_reason} (Trade #{trade_id})"
@@ -717,7 +726,7 @@ class PaperTradingEngine:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM paper_trades WHERE status = 'OPEN'")
-            open_trades = cursor.fetchall()
+            open_trades = [dict(row) for row in cursor.fetchall()]
 
         for trade in open_trades:
             ticker = trade["ticker"]

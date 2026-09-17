@@ -1,7 +1,7 @@
 {
-  "auto_sync_on_startup": true,
-  "last_sync_timestamp": "2026-09-16 12:10:20 UTC",
-  "last_sync_bars": 161,
+  "auto_sync_on_startup": false,
+  "last_sync_timestamp": "2026-09-17 10:28:07 UTC",
+  "last_sync_bars": 167,
   "last_sync_funds": 50,
   "last_sync_status": "Success"
 }
