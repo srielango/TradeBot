@@ -40,6 +40,7 @@ from ui.backtest_tab import BacktestTab
 from ui.data_sync_widget import DataSyncWidget
 from ui.fundamental_screener_tab import FundamentalScreenerTab
 from ui.morning_scanner_tab import MorningScannerTab
+from ui.nifty_header_widget import NiftyHeaderWidget
 from ui.paper_trading_tab import PaperTradingTab
 
 
@@ -72,9 +73,21 @@ class TradingApp(QMainWindow):
 
     def init_ui(self):
         """Construct layout, sidebar controls, charts, and data tabs."""
+        # Root layout with persistent Nifty live data header visible across all tabs
+        root_widget = QWidget()
+        root_layout = QVBoxLayout(root_widget)
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
+
+        # Persistent Nifty Live Benchmark Header
+        self.header_widget = NiftyHeaderWidget(self)
+        self.header_widget.ticker_clicked.connect(self._on_header_ticker_clicked)
+        root_layout.addWidget(self.header_widget)
+
         # Tab Navigation Layout
         self.tabs = QTabWidget()
-        self.setCentralWidget(self.tabs)
+        root_layout.addWidget(self.tabs)
+        self.setCentralWidget(root_widget)
 
         # Interactive Chart Tab (Analysis Terminal)
         self.chart_tab = QWidget()
@@ -528,6 +541,15 @@ class TradingApp(QMainWindow):
         # Fallback: select first item if prefix not found
         if self.ticker_list.count() > 0:
             self.ticker_list.setCurrentRow(0)
+
+    def _on_header_ticker_clicked(self, ticker: str) -> None:
+        """Handle header benchmark card click by switching to Analysis Terminal and loading chart.
+
+        Args:
+            ticker (str): Selected benchmark ticker symbol (e.g. '^NSEI').
+        """
+        self.tabs.setCurrentIndex(0)
+        self._select_default_ticker(ticker)
 
     # ── Main chart rendering ─────────────────────────────────────────────────
 
@@ -1262,6 +1284,8 @@ class TradingApp(QMainWindow):
     def closeEvent(self, event) -> None:
         """Clean up background workers and threads on application exit."""
         DataSyncService.get_instance().cancel_sync()
+        if hasattr(self, 'header_widget') and self.header_widget:
+            self.header_widget.cleanup()
         if hasattr(self, 'paper_trading_tab') and self.paper_trading_tab.worker:
             self.paper_trading_tab.worker.stop()
             self.paper_trading_tab.worker.wait(1500)

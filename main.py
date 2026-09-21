@@ -33,11 +33,26 @@ from strategies.dual_moving_average_adx import DualMovingAverageAdx
 from strategies.moving_average_stochastic import MovingAverageStochastic
 from strategies.nifty_dual_momentum_breakout import NiftyDualMomentumBreakout
 from strategies.rsi_bull_trend_pullback import RsiBullTrendPullback
-from ui import TradingApp
+from ui import NiftyHeaderWidget, TradingApp
 
 
 def example_trading_dashboard() -> None:
     """Showcase and launch Tradebot Management Studio graphical interface."""
+    app = QApplication(sys.argv)
+    window = TradingApp()
+    window.show()
+    sys.exit(app.exec())
+
+
+def example_nifty_live_header() -> None:
+    """Showcase live Nifty benchmark header component with real-time quote streaming."""
+    print("=" * 80)
+    print("NIFTY LIVE BENCHMARK HEADER SHOWCASE")
+    print("=" * 80)
+    print("Launching TradeBot Studio with real-time Nifty 50 & Bank Nifty benchmark header...")
+    print(f"Header component class: {NiftyHeaderWidget.__name__}")
+    print("Features: Live quotes, net/pct change, day high/low gauge, IST clock, click navigation.")
+    print("-" * 80)
     app = QApplication(sys.argv)
     window = TradingApp()
     window.show()
@@ -1053,7 +1068,9 @@ def example_paper_trading() -> None:
 
 
 def example_paper_trading_enhancements() -> None:
-    """Showcase paper trading enhancements: searchable security, SL/target modification, and partial selling."""
+    """Showcase paper trading enhancements: searchable security, SL/target modification,
+    and partial selling.
+    """
     print("=" * 85)
     print("PAPER TRADING ENHANCEMENTS SHOWCASE")
     print("=" * 85)
@@ -1180,7 +1197,7 @@ def example_paper_trading_cagr() -> None:
 
     Demonstrates:
     1. Database schema migration: Verification of entry_date and exit_date columns.
-    2. Preservation of existing records: Verification that open positions have today's date as entry_date.
+    2. Preservation of existing records: Open positions defaulted to today's date.
     3. Order placement and closure: Recording entry_date and exit_date on new orders.
     4. Individual Trade CAGR: Holding duration in calendar days and annualized returns.
     5. Overall Portfolio CAGR: Seed capital vs net portfolio value evaluation.
@@ -1190,8 +1207,8 @@ def example_paper_trading_cagr() -> None:
     print("=" * 90)
     print("Key Highlights:")
     print("  1. Schema Updates          : 'entry_date' and 'exit_date' columns in 'paper_trades'")
-    print("  2. Existing Records        : 100% preserved; open positions defaulted to today's date")
-    print("  3. Holding Duration        : Exact calendar days computed for each active and closed trade")
+    print("  2. Existing Records        : Preserved; open positions defaulted to today's date")
+    print("  3. Holding Duration        : Exact calendar days computed for trades")
     print("  4. CAGR Calculation        : Annualized Compound Growth Rate for trades and portfolio")
     print("-" * 90)
 
@@ -1250,7 +1267,8 @@ def example_paper_trading_cagr() -> None:
         exit_reason="CAGR_SHOWCASE_PARTIAL",
     )
     print(
-        f"  Closed Tranche #{partial_res['closed_trade_id']}: {partial_res['sold_quantity']} shares | "
+        f"  Closed Tranche #{partial_res['closed_trade_id']}: "
+        f"{partial_res['sold_quantity']} shares | "
         f"Entry Date: {partial_res['entry_date']} | Exit Date: {partial_res['exit_date']}"
     )
     print(
@@ -1284,7 +1302,10 @@ def example_paper_trading_cagr() -> None:
     )
     print(f"  Entry Price       : INR 3,200.00 ({cagr_sample['entry_date']})")
     print(f"  Exit Price        : INR 3,350.00 ({cagr_sample['exit_date']})")
-    print(f"  Holding Duration  : {cagr_sample['holding_days']} days ({cagr_sample['duration_years']:.2f} yrs)")
+    print(
+        f"  Holding Duration  : {cagr_sample['holding_days']} days "
+        f"({cagr_sample['duration_years']:.2f} yrs)"
+    )
     print(f"  Absolute Return   : {cagr_sample['return_pct']:+.2f}%")
     print(f"  Annualized CAGR   : {cagr_sample['cagr_pct']:+.2f}%")
 
@@ -1305,7 +1326,7 @@ def example_paper_trading_cagr() -> None:
     # Part 8: Comprehensive Portfolio CAGR Report
     port_metrics = calculate_portfolio_cagr(engine)
     print(
-        f"\n[8] Portfolio Metrics Summary: Net Worth INR {port_metrics['total_portfolio_value']:,.2f} | "
+        f"\n[8] Portfolio Metrics: Net Worth INR {port_metrics['total_portfolio_value']:,.2f} | "
         f"Portfolio CAGR: {port_metrics['portfolio_cagr_pct']:+.2f}%"
     )
     print("\n" + generate_cagr_report(engine))
@@ -1547,6 +1568,12 @@ def main() -> None:
         or "--updater" in sys.argv
     ):
         example_daily_data_updater()
+    elif (
+        "--nifty" in sys.argv
+        or "--nifty-header" in sys.argv
+        or "--header" in sys.argv
+    ):
+        example_nifty_live_header()
     else:
         example_trading_dashboard()
 
