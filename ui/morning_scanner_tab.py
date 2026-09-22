@@ -30,6 +30,7 @@ from data_sync_service import DataSyncService
 from market_repository import MarketRepository
 from morning_scanner import MorningScanner
 from strategies import STRATEGY_REGISTRY
+from ui.ticker_chart_popup import TickerChartPopupDialog
 
 
 class ScannerWorker(QThread):
@@ -79,6 +80,7 @@ class MorningScannerTab(QWidget):
         self.worker: ScannerWorker | None = None
         self.all_results: list[dict[str, Any]] = []
         self.filtered_results: list[dict[str, Any]] = []
+        self._active_chart_dialog: TickerChartPopupDialog | None = None
 
         self.init_ui()
         self._connect_sync_service()
@@ -254,6 +256,7 @@ class MorningScannerTab(QWidget):
         header_view.setSectionResizeMode(8, QHeaderView.ResizeMode.ResizeToContents)
 
         self.table.itemDoubleClicked.connect(self._on_row_double_clicked)
+        self.table.cellClicked.connect(self._on_cell_clicked)
         self.table.itemSelectionChanged.connect(self._on_row_selected)
         main_layout.addWidget(self.table)
 
@@ -406,6 +409,8 @@ class MorningScannerTab(QWidget):
             font = item_ticker.font()
             font.setBold(True)
             item_ticker.setFont(font)
+            item_ticker.setForeground(QColor("#61afef"))
+            item_ticker.setToolTip(f"Click to open 3-month chart for {r['ticker']}")
             self.table.setItem(row_idx, 0, item_ticker)
 
             # Company Name
@@ -526,10 +531,21 @@ class MorningScannerTab(QWidget):
                 sl = info.get("stop_loss")
                 tp = info.get("take_profit")
                 details = ["BUY SIGNAL TRIGGERED"]
-                if sl:
+                prev_price = stock_record.get("prev_close_price", 0.0)
+                if sl and prev_price > 0:
+                    sl_diff = prev_price - sl
+                    sl_pct = (sl_diff / prev_price) * 100.0
+                    details.append(f"SL: INR {sl:,.2f} (-{sl_pct:.2f}%)")
+                elif sl:
                     details.append(f"SL: INR {sl:,.2f}")
-                if tp:
-                    details.append(f"TP: INR {tp:,.2f}")
+
+                if tp and prev_price > 0:
+                    tp_diff = tp - prev_price
+                    tp_pct = (tp_diff / prev_price) * 100.0
+                    details.append(f"Target: INR {tp:,.2f} (+{tp_pct:.2f}%)")
+                elif tp:
+                    details.append(f"Target: INR {tp:,.2f}")
+
                 is_chosen = (strat_name == chosen and stock_record["confluence_count"] >= 2)
                 if is_chosen:
                     details.append("(SELECTED: LEAST PROFIT)")
@@ -542,13 +558,53 @@ class MorningScannerTab(QWidget):
                 label.setText("[NO] No Buy Signal")
                 label.setStyleSheet("color: #7f8c8d;")
 
+    def _on_cell_clicked(self, row: int, col: int) -> None:
+        """Handle cell click in the scan results table.
+
+        - Clicking on Column 0 (Ticker): Shows bottom signal details AND opens 3-month chart popup.
+        - Clicking on any other column (col > 0): Shows bottom buy signal trigger details without
+          opening popup.
+        """
+        if 0 <= row < len(self.filtered_results):
+            record = self.filtered_results[row]
+            self.table.selectRow(row)
+            self._update_detail_inspector(record)
+
+            if col == 0:
+                self.open_chart_popup(record["ticker"])
+
     def _on_row_double_clicked(self, item: QTableWidgetItem) -> None:
-        """Emit ticker_selected signal to navigate to the Analysis Terminal."""
+        """Open 3-month chart popup and update strategy details when a row is double-clicked."""
         row_idx = item.row()
         if 0 <= row_idx < len(self.filtered_results):
-            ticker = self.filtered_results[row_idx]["ticker"]
-            display_str = f"{ticker} (STOCK)"
-            self.ticker_selected.emit(display_str)
+            record = self.filtered_results[row_idx]
+            self.table.selectRow(row_idx)
+            self._update_detail_inspector(record)
+            self.open_chart_popup(record["ticker"])
+
+    def open_chart_popup(self, ticker: str) -> None:
+        """Display interactive 3-month chart popup for the specified ticker.
+
+        Args:
+            ticker (str): Stock ticker symbol.
+        """
+        if not ticker:
+            return
+        clean_ticker = ticker.split(" ")[0]
+        if self._active_chart_dialog and self._active_chart_dialog.isVisible():
+            self._active_chart_dialog.load_ticker(clean_ticker)
+            self._active_chart_dialog.raise_()
+            self._active_chart_dialog.activateWindow()
+        else:
+            self._active_chart_dialog = TickerChartPopupDialog(
+                clean_ticker,
+                repo=self.repo,
+                parent=self,
+                default_period_months=3,
+            )
+            self._active_chart_dialog.show()
+            self._active_chart_dialog.raise_()
+            self._active_chart_dialog.activateWindow()
 
     def export_csv(self) -> None:
         """Export current filtered morning scanner results to a CSV spreadsheet."""

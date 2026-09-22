@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
 
 from fundamental_screener import FundamentalScreener
 from market_repository import MarketRepository
+from ui.ticker_chart_popup import TickerChartPopupDialog
 
 
 class FundamentalSyncWorker(QThread):
@@ -81,9 +82,10 @@ class FundamentalScreenerTab(QWidget):
         super().__init__()
         self.repo = repo
         self.screener = FundamentalScreener(self.repo.db_path)
-        self.sync_worker: FundamentalSyncWorker | None = None
         self.all_securities: list[dict[str, Any]] = []
         self.current_rows_data: list[dict[str, Any]] = []
+        self.worker: FundamentalSyncWorker | None = None
+        self._active_chart_dialog: TickerChartPopupDialog | None = None
 
         self.init_ui()
         self.load_securities_data()
@@ -311,6 +313,7 @@ class FundamentalScreenerTab(QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.doubleClicked.connect(self.on_table_double_click)
+        self.table.cellClicked.connect(self._on_table_cell_clicked)
 
         main_layout.addWidget(self.table)
 
@@ -487,8 +490,13 @@ class FundamentalScreenerTab(QWidget):
                 else:
                     widget_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
-                # Color-code individual metric cells based on check thresholds
-                if col_idx == 2:  # Market Cap
+                if col_idx == 0:
+                    widget_item.setForeground(QColor("#61afef"))
+                    f = widget_item.font()
+                    f.setBold(True)
+                    widget_item.setFont(f)
+                    widget_item.setToolTip(f"Click to open 3-month chart for {s['ticker']}")
+                elif col_idx == 2:  # Market Cap
                     widget_item.setForeground(
                         QColor(76, 175, 80) if checks["mcap"] else QColor(244, 67, 54)
                     )
@@ -582,14 +590,44 @@ class FundamentalScreenerTab(QWidget):
         self.load_securities_data()
         self.apply_filters()
 
+    def _on_table_cell_clicked(self, row: int, col: int) -> None:
+        """Handle single click on table cells, opening 3-month chart popup if Ticker is clicked."""
+        if col == 0:
+            item = self.table.item(row, 0)
+            if item:
+                self.open_chart_popup(item.text())
+
     def on_table_double_click(self) -> None:
-        """Emit ticker_selected signal when a table row is double-clicked."""
+        """Open 3-month chart popup when a table row is double-clicked."""
         current_row = self.table.currentRow()
         if current_row >= 0:
             ticker_item = self.table.item(current_row, 0)
             if ticker_item:
-                formatted_ticker = f"{ticker_item.text()} (STOCK)"
-                self.ticker_selected.emit(formatted_ticker)
+                self.open_chart_popup(ticker_item.text())
+
+    def open_chart_popup(self, ticker_str: str) -> None:
+        """Open the interactive 3-month chart popup for the specified ticker.
+
+        Args:
+            ticker_str (str): Stock ticker symbol.
+        """
+        if not ticker_str:
+            return
+        clean_ticker = ticker_str.split(" ")[0]
+        if self._active_chart_dialog and self._active_chart_dialog.isVisible():
+            self._active_chart_dialog.load_ticker(clean_ticker)
+            self._active_chart_dialog.raise_()
+            self._active_chart_dialog.activateWindow()
+        else:
+            self._active_chart_dialog = TickerChartPopupDialog(
+                clean_ticker,
+                repo=self.repo,
+                parent=self,
+                default_period_months=3,
+            )
+            self._active_chart_dialog.show()
+            self._active_chart_dialog.raise_()
+            self._active_chart_dialog.activateWindow()
 
     def _get_export_dataframe(self) -> pd.DataFrame:
         """Convert current filtered screener rows into a formatted DataFrame for export."""

@@ -31,13 +31,16 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from market_repository import MarketRepository
 from paper_trading_engine import (
     BASELINE_RISK_PER_TRADE,
     MAX_TRADE_ALLOCATION,
     PaperTradingEngine,
     PositionSizingError,
 )
+from ui.nifty_header_widget import is_market_open_ist
 from ui.paper_trading_dialogs import ModifyPositionDialog, PartialSellDialog
+from ui.ticker_chart_popup import TickerChartPopupDialog
 
 
 class PaperTradingWorker(QThread):
@@ -62,30 +65,36 @@ class PaperTradingWorker(QThread):
         self._manual_trigger = False
 
     def run(self) -> None:
-        """Continuously poll live market prices for active open positions."""
+        """Continuously poll live market prices for active open positions when market is open."""
         while self._is_running:
             try:
-                open_trades = self.engine.get_open_trades()
-                if open_trades:
-                    tickers = list({t["ticker"] for t in open_trades})
+                is_open, desc = is_market_open_ist()
+                if not is_open and not self._manual_trigger:
                     self.status_updated.emit(
-                        f"Fetching live quotes for {len(tickers)} active position(s)..."
-                    )
-
-                    price_map = self.engine.fetch_live_quotes_batch(tickers)
-                    if price_map:
-                        exited_trades = self.engine.evaluate_open_trades(price_map)
-                        self.prices_updated.emit(price_map)
-
-                        if exited_trades:
-                            self.trades_exited.emit(exited_trades)
-
-                    now_str = datetime.now(timezone.utc).astimezone().strftime("%H:%M:%S")
-                    self.status_updated.emit(
-                        f"Monitoring active: {len(tickers)} stock(s) updated at {now_str}"
+                        f"Monitoring paused: Market closed ({desc} - ● NSE CLOSED)"
                     )
                 else:
-                    self.status_updated.emit("Monitoring idle: No active open positions.")
+                    open_trades = self.engine.get_open_trades()
+                    if open_trades:
+                        tickers = list({t["ticker"] for t in open_trades})
+                        self.status_updated.emit(
+                            f"Fetching live quotes for {len(tickers)} active position(s)..."
+                        )
+
+                        price_map = self.engine.fetch_live_quotes_batch(tickers)
+                        if price_map:
+                            exited_trades = self.engine.evaluate_open_trades(price_map)
+                            self.prices_updated.emit(price_map)
+
+                            if exited_trades:
+                                self.trades_exited.emit(exited_trades)
+
+                        now_str = datetime.now(timezone.utc).astimezone().strftime("%H:%M:%S")
+                        self.status_updated.emit(
+                            f"Monitoring active: {len(tickers)} stock(s) updated at {now_str}"
+                        )
+                    else:
+                        self.status_updated.emit("Monitoring idle: No active open positions.")
 
             except (ValueError, KeyError, IndexError, TypeError, AttributeError) as err:
                 self.error_occurred.emit(str(err))
@@ -119,8 +128,9 @@ class PaperTradingTab(QWidget):
         """
         super().__init__()
         self.engine = PaperTradingEngine()
-        self.repo = repo
+        self.repo = repo or MarketRepository()
         self.worker: PaperTradingWorker | None = None
+        self._active_chart_dialog: TickerChartPopupDialog | None = None
 
         self.init_ui()
         self.refresh_all_views()
@@ -278,14 +288,25 @@ class PaperTradingTab(QWidget):
         form_layout.addWidget(self.ticker_combo)
 
         fetch_row = QHBoxLayout()
-        self.btn_fetch_cmp = QPushButton("⚡ Fetch Current Market Price")
+        self.btn_fetch_cmp = QPushButton("⚡ Fetch CMP")
         self.btn_fetch_cmp.setStyleSheet(
             "QPushButton { background-color: #2c313a; color: #61afef; font-size: 11px; "
-            "padding: 4px 8px; border: 1px solid #3b4048; border-radius: 4px; } "
+            "padding: 4px 8px; border: 1px solid #3b4048; border-radius: 4px; font-weight: bold; } "
             "QPushButton:hover { background-color: #3e4451; color: #ffffff; }"
         )
         self.btn_fetch_cmp.clicked.connect(self.fetch_cmp_for_selected)
         fetch_row.addWidget(self.btn_fetch_cmp)
+
+        self.btn_view_chart = QPushButton("📈 3M Chart")
+        self.btn_view_chart.setStyleSheet(
+            "QPushButton { background-color: #2c313a; color: #98c379; font-size: 11px; "
+            "padding: 4px 8px; border: 1px solid #3b4048; border-radius: 4px; font-weight: bold; } "
+            "QPushButton:hover { background-color: #3e4451; color: #ffffff; }"
+        )
+        self.btn_view_chart.setToolTip("Open 3-month interactive chart for the selected stock")
+        self.btn_view_chart.clicked.connect(self._on_view_chart_clicked)
+        fetch_row.addWidget(self.btn_view_chart)
+
         form_layout.addLayout(fetch_row)
 
         # 2. Entry Price
@@ -432,6 +453,8 @@ class PaperTradingTab(QWidget):
         for idx in range(len(open_headers)):
             open_header.setSectionResizeMode(idx, QHeaderView.ResizeMode.ResizeToContents)
         open_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table_open.cellClicked.connect(self._on_open_table_cell_clicked)
+        self.table_open.itemDoubleClicked.connect(self._on_open_table_double_clicked)
 
         open_layout.addWidget(self.table_open)
         layout.addWidget(open_group, stretch=1)
@@ -472,6 +495,8 @@ class PaperTradingTab(QWidget):
         for idx in range(len(history_headers)):
             history_header.setSectionResizeMode(idx, QHeaderView.ResizeMode.ResizeToContents)
         history_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.table_history.cellClicked.connect(self._on_history_table_cell_clicked)
+        self.table_history.itemDoubleClicked.connect(self._on_history_table_double_clicked)
 
         history_layout.addWidget(self.table_history)
         layout.addWidget(history_group, stretch=1)
@@ -889,6 +914,13 @@ class PaperTradingTab(QWidget):
                 )
                 if col_idx in [10, 11]:
                     item.setForeground(pnl_color)
+                if col_idx == 2:
+                    # Highlight ticker with interactive accent styling
+                    item.setForeground(QColor("#61afef"))
+                    f = item.font()
+                    f.setBold(True)
+                    item.setFont(f)
+                    item.setToolTip(f"Click to open 3-month chart for {trade['ticker']}")
                 self.table_open.setItem(row_idx, col_idx, item)
 
             # Actions Container Widget (Modify, Sell Partial, Exit)
@@ -977,6 +1009,13 @@ class PaperTradingTab(QWidget):
                 )
                 if col_idx in [8, 9]:
                     item.setForeground(pnl_color)
+                if col_idx == 3:
+                    # Highlight ticker with interactive accent styling
+                    item.setForeground(QColor("#61afef"))
+                    f = item.font()
+                    f.setBold(True)
+                    item.setFont(f)
+                    item.setToolTip(f"Click to open 3-month chart for {trade['ticker']}")
                 self.table_history.setItem(row_idx, col_idx, item)
 
     def start_background_worker(self) -> None:
@@ -1028,9 +1067,73 @@ class PaperTradingTab(QWidget):
                 f"Realized PnL: {pnl_str}\nUpdated Cash: ₹{trade['updated_cash']:,.2f}",
             )
 
+    def _on_open_table_cell_clicked(self, row: int, column: int) -> None:
+        """Open 3-month chart popup when Ticker cell is clicked in open positions table."""
+        if column == 2:
+            item = self.table_open.item(row, 2)
+            if item:
+                self.open_chart_popup(item.text())
+
+    def _on_open_table_double_clicked(self, item: QTableWidgetItem) -> None:
+        """Open 3-month chart popup when an open position row is double-clicked."""
+        row = item.row()
+        ticker_item = self.table_open.item(row, 2)
+        if ticker_item:
+            self.open_chart_popup(ticker_item.text())
+
+    def _on_history_table_cell_clicked(self, row: int, column: int) -> None:
+        """Open 3-month chart popup when Ticker cell is clicked in trade history table."""
+        if column == 3:
+            item = self.table_history.item(row, 3)
+            if item:
+                self.open_chart_popup(item.text())
+
+    def _on_history_table_double_clicked(self, item: QTableWidgetItem) -> None:
+        """Open 3-month chart popup when a trade history row is double-clicked."""
+        row = item.row()
+        ticker_item = self.table_history.item(row, 3)
+        if ticker_item:
+            self.open_chart_popup(ticker_item.text())
+
+    def _on_view_chart_clicked(self) -> None:
+        """Open 3-month chart popup for the currently selected ticker in order entry."""
+        current_text = self.ticker_combo.currentText().strip()
+        if current_text:
+            self.open_chart_popup(current_text)
+
+    def open_chart_popup(self, ticker: str) -> None:
+        """Display interactive 3-month chart popup for the specified ticker symbol.
+
+        Args:
+            ticker (str): Stock ticker symbol.
+        """
+        if not ticker:
+            return
+        clean_ticker = ticker.split(" ")[0]
+        if self._active_chart_dialog and self._active_chart_dialog.isVisible():
+            self._active_chart_dialog.load_ticker(clean_ticker)
+            self._active_chart_dialog.raise_()
+            self._active_chart_dialog.activateWindow()
+        else:
+            self._active_chart_dialog = TickerChartPopupDialog(
+                ticker=clean_ticker,
+                repo=self.repo,
+                parent=self,
+                default_period_months=3,
+            )
+            self._active_chart_dialog.show()
+            self._active_chart_dialog.raise_()
+            self._active_chart_dialog.activateWindow()
+
     def _on_worker_status(self, msg: str) -> None:
-        """Update status bar label."""
+        """Update status bar label with contextual badge coloring."""
         self.lbl_status.setText(msg)
+        if "NSE CLOSED" in msg or "paused" in msg.lower():
+            self.lbl_status.setStyleSheet("color: #e5c07b; font-weight: bold;")
+        elif "active" in msg.lower() or "fetching" in msg.lower():
+            self.lbl_status.setStyleSheet("color: #98c379; font-weight: bold;")
+        else:
+            self.lbl_status.setStyleSheet("color: #7f848e; font-style: italic;")
 
     def _on_worker_error(self, err_msg: str) -> None:
         """Log background worker error and display on status label."""

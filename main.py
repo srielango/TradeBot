@@ -33,7 +33,12 @@ from strategies.dual_moving_average_adx import DualMovingAverageAdx
 from strategies.moving_average_stochastic import MovingAverageStochastic
 from strategies.nifty_dual_momentum_breakout import NiftyDualMomentumBreakout
 from strategies.rsi_bull_trend_pullback import RsiBullTrendPullback
-from ui import NiftyHeaderWidget, TradingApp
+from ui import (
+    NiftyHeaderWidget,
+    TickerChartPopupDialog,
+    TradingApp,
+    show_ticker_chart_popup,
+)
 
 
 def example_trading_dashboard() -> None:
@@ -56,6 +61,31 @@ def example_nifty_live_header() -> None:
     app = QApplication(sys.argv)
     window = TradingApp()
     window.show()
+    sys.exit(app.exec())
+
+
+def example_ticker_chart_popup(ticker: str = "RELIANCE.NS") -> None:
+    """Showcase interactive 3-month ticker chart popup dialog component.
+
+    Args:
+        ticker (str): Ticker symbol to display. Defaults to 'RELIANCE.NS'.
+    """
+    print("=" * 80)
+    print("TICKER CHART POPUP DIALOG SHOWCASE")
+    print("=" * 80)
+    print(f"Launching interactive 3-month chart popup for: {ticker}")
+    print(f"Component: {TickerChartPopupDialog.__name__}")
+    print("Features:")
+    print("  - Default 3-month timeframe display")
+    print("  - Interactive timeframe switcher (1M, 3M, 6M, 1Y, All)")
+    print("  - Candlestick price chart + Volume subplot")
+    print("  - EMA 20 & EMA 50 overlay toggles")
+    print("  - Metric summary: Latest Price, Period Return, Period High/Low")
+    print("-" * 80)
+    app = QApplication.instance() or QApplication(sys.argv)
+    repo = MarketRepository()
+    dialog = show_ticker_chart_popup(ticker=ticker, repo=repo)
+    dialog.show()
     sys.exit(app.exec())
 
 
@@ -1574,6 +1604,16 @@ def main() -> None:
         or "--header" in sys.argv
     ):
         example_nifty_live_header()
+    elif (
+        "--chart-popup" in sys.argv
+        or "--popup-chart" in sys.argv
+        or "--popup" in sys.argv
+    ):
+        target_ticker = "RELIANCE.NS"
+        for arg in sys.argv:
+            if arg.startswith("--ticker="):
+                target_ticker = arg.split("=")[1]
+        example_ticker_chart_popup(ticker=target_ticker)
     else:
         example_trading_dashboard()
 

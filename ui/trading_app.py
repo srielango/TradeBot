@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QSpinBox,
-    QTableWidget,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -42,6 +41,7 @@ from ui.fundamental_screener_tab import FundamentalScreenerTab
 from ui.morning_scanner_tab import MorningScannerTab
 from ui.nifty_header_widget import NiftyHeaderWidget
 from ui.paper_trading_tab import PaperTradingTab
+from ui.ticker_chart_popup import show_ticker_chart_popup
 
 
 class TradingApp(QMainWindow):
@@ -446,13 +446,6 @@ class TradingApp(QMainWindow):
         self.paper_trading_tab = PaperTradingTab(self.repo)
         self.tabs.addTab(self.paper_trading_tab, 'Paper Trading')
 
-        # Trade Execution Journal Tab
-        self.journal_tab = QTableWidget(5, 5)
-        self.journal_tab.setHorizontalHeaderLabels([
-            'Execution Date', 'Ticker', 'Type', 'Entry Price', 'Net PnL (INR)',
-        ])
-        self.tabs.addTab(self.journal_tab, 'Execution Journal')
-
     # ── Indicator toggle helpers ─────────────────────────────────────────────
 
     def _on_stoch_toggled(self) -> None:
@@ -554,27 +547,20 @@ class TradingApp(QMainWindow):
     # ── Main chart rendering ─────────────────────────────────────────────────
 
     def on_screener_ticker_selected(self, ticker_str: str) -> None:
-        """Handle ticker double-click from Fundamental Screener tab by switching to Backtest.
+        """Handle ticker selection from Fundamental Screener by opening 3-month chart popup.
 
         Args:
             ticker_str (str): Selected ticker string, e.g. 'INFY.NS (STOCK)'.
         """
-        self.backtest_tab.set_active_ticker(ticker_str)
-        self.tabs.setCurrentWidget(self.backtest_tab)
+        show_ticker_chart_popup(ticker_str, repo=self.repo, parent=self)
 
     def on_scanner_ticker_selected(self, ticker_str: str) -> None:
-        """Handle ticker double-click from Morning Scanner tab by switching to Analysis Terminal.
+        """Handle ticker selection from Morning Scanner by opening 3-month chart popup.
 
         Args:
             ticker_str (str): Selected ticker string, e.g. 'INFY.NS (STOCK)'.
         """
-        self.backtest_tab.set_active_ticker(ticker_str)
-        ticker_sym = ticker_str.split(" ")[0]
-        for i in range(self.ticker_list.count()):
-            if self.ticker_list.item(i).text().startswith(ticker_sym):
-                self.ticker_list.setCurrentRow(i)
-                break
-        self.tabs.setCurrentWidget(self.chart_tab)
+        show_ticker_chart_popup(ticker_str, repo=self.repo, parent=self)
 
     def refresh_chart(self):
         """Update and re-render Plotly chart with candlesticks, volume, and indicators.
