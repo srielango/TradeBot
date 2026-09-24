@@ -3,6 +3,7 @@
 from ui.backtest_tab import BacktestTab
 from ui.data_sync_widget import DataSyncWidget
 from ui.fundamental_screener_tab import FundamentalScreenerTab
+from ui.market_sentiment_tab import MarketSentimentTab
 from ui.morning_scanner_tab import MorningScannerTab
 from ui.nifty_header_widget import NiftyHeaderWidget, NiftyLiveWorker
 from ui.paper_trading_dialogs import ModifyPositionDialog, PartialSellDialog
@@ -14,6 +15,7 @@ __all__ = [
     "BacktestTab",
     "DataSyncWidget",
     "FundamentalScreenerTab",
+    "MarketSentimentTab",
     "ModifyPositionDialog",
     "MorningScannerTab",
     "NiftyHeaderWidget",

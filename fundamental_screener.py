@@ -16,6 +16,7 @@ import pandas as pd
 import yfinance as yf
 
 from config import DB_PATH
+from screener_data_fetcher import ScreenerCompanyFundamentals, ScreenerDataFetcher
 
 
 @dataclass
@@ -51,6 +52,7 @@ class FundamentalScreener:
             db_path (str): Filepath to the SQLite database. Defaults to DB_PATH.
         """
         self.db_path = str(db_path)
+        self.screener_fetcher = ScreenerDataFetcher()
         self.init_database()
 
     def init_database(self) -> None:
@@ -287,35 +289,68 @@ class FundamentalScreener:
             avg_vol_252 = self.calculate_avg_volume(df_sorted['volume'], period=252)
             beta_nsei = self.calculate_beta_nsei(df_sorted['close'], period=252)
 
-        # 2. Fetch Yahoo Finance Fundamentals
-        info = self.fetch_yahoo_info(clean_ticker)
+        # 2. Fetch Fundamentals from Screener.in with automatic Yahoo Finance fallback
+        screener_data: Optional[ScreenerCompanyFundamentals] = None
+        try:
+            screener_data = self.screener_fetcher.fetch_fundamentals(clean_ticker)
+        except Exception as err:
+            print(
+                f"Screener.in fetch error for {clean_ticker} ({err}), "
+                "falling back to Yahoo Finance."
+            )
 
-        market_cap = info.get('marketCap')
-        market_cap_cr = (market_cap / 1e7) if market_cap is not None else None
+        market_cap_cr: Optional[float] = None
+        market_cap: Optional[float] = None
+        debt_to_equity: Optional[float] = None
+        peg_ratio: Optional[float] = None
+        roe: Optional[float] = None
+        institutional_ownership: Optional[float] = None
 
-        # Normalize Debt to Equity: Yahoo Finance provides percentages (e.g. 10.2 for 10.2%)
-        d_to_e_raw = info.get('debtToEquity')
-        if d_to_e_raw is not None:
-            # If greater than 2.0, it's expressed in percent (e.g. 36.65% -> 0.3665 ratio)
-            debt_to_equity = round(float(d_to_e_raw) / 100.0, 4)
-        else:
-            debt_to_equity = None
+        if screener_data is not None:
+            market_cap_cr = screener_data.market_cap_cr
+            if market_cap_cr is not None:
+                market_cap = market_cap_cr * 1e7
+            debt_to_equity = screener_data.debt_to_equity
+            peg_ratio = screener_data.peg_ratio
+            roe = screener_data.roe
+            institutional_ownership = screener_data.institutional_ownership
 
-        peg_ratio = info.get('pegRatio')
-        if peg_ratio is not None:
-            peg_ratio = round(float(peg_ratio), 3)
+        # Fallback to Yahoo Finance for any missing metrics or beta
+        info: dict[str, Any] = {}
+        needs_fallback = (
+            market_cap_cr is None
+            or debt_to_equity is None
+            or peg_ratio is None
+            or roe is None
+            or institutional_ownership is None
+        )
+        if needs_fallback:
+            info = self.fetch_yahoo_info(clean_ticker)
 
+        if market_cap_cr is None and info.get('marketCap') is not None:
+            market_cap = info.get('marketCap')
+            market_cap_cr = (market_cap / 1e7) if market_cap is not None else None
+
+        if debt_to_equity is None:
+            d_to_e_raw = info.get('debtToEquity')
+            if d_to_e_raw is not None:
+                debt_to_equity = round(float(d_to_e_raw) / 100.0, 4)
+
+        if peg_ratio is None and info.get('pegRatio') is not None:
+            peg_ratio = round(float(info['pegRatio']), 3)
+
+        if roe is None and info.get('returnOnEquity') is not None:
+            roe = round(float(info['returnOnEquity']), 4)
+
+        if institutional_ownership is None and info.get('heldPercentInstitutions') is not None:
+            institutional_ownership = round(float(info['heldPercentInstitutions']), 4)
+
+        # Get Yahoo built-in beta if available
+        if not info and (market_cap_cr is not None):
+            info = self.fetch_yahoo_info(clean_ticker)
         beta_yf = info.get('beta')
         if beta_yf is not None:
             beta_yf = round(float(beta_yf), 3)
-
-        roe = info.get('returnOnEquity')
-        if roe is not None:
-            roe = round(float(roe), 4)
-
-        institutional_ownership = info.get('heldPercentInstitutions')
-        if institutional_ownership is not None:
-            institutional_ownership = round(float(institutional_ownership), 4)
 
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 

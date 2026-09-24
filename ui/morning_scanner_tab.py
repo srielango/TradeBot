@@ -5,8 +5,8 @@ from typing import Any
 # pylint: disable=no-name-in-module
 # PyQt6 modules are compiled C/C++ extensions (.pyd), which static analyzers
 # like Pylint cannot inspect without dynamic loading.
-from PyQt6.QtCore import Qt, QThread, QUrl, pyqtSignal
-from PyQt6.QtGui import QColor, QDesktopServices, QFont
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -29,7 +29,6 @@ from PyQt6.QtWidgets import (
 from data_sync_service import DataSyncService
 from market_repository import MarketRepository
 from market_sentiment_analyzer import (
-    DEFAULT_RSS_FEEDS,
     MarketSentimentAnalyzer,
     MarketSentimentSummary,
 )
@@ -99,6 +98,7 @@ class MorningScannerTab(QWidget):
     """Morning Scanner dashboard tab identifying actionable buy and sell signals."""
 
     ticker_selected = pyqtSignal(str)
+    open_sentiment_tab_requested = pyqtSignal()
 
     def __init__(self, repo: MarketRepository):
         """Initialize morning scanner tab with repository and interactive controls.
@@ -253,18 +253,18 @@ class MorningScannerTab(QWidget):
         main_layout.addLayout(kpi_layout)
 
         # =====================================================================
-        # Section 3: Market Sentiment & Macro Catalysts (Live RSS Feed)
+        # Section 3: Macro Sentiment Strip (Compact Summary)
         # =====================================================================
-        self.sentiment_group = QGroupBox(
-            "Market Sentiment & Breaking Catalysts (Live RSS Feed)"
+        self.sentiment_strip = QFrame()
+        self.sentiment_strip.setStyleSheet(
+            "QFrame { background-color: #21252b; border: 1px solid #3b4048; "
+            "border-radius: 6px; padding: 4px 10px; }"
         )
-        sentiment_layout = QVBoxLayout(self.sentiment_group)
-        sentiment_layout.setSpacing(8)
-        sentiment_layout.setContentsMargins(12, 10, 12, 10)
+        strip_layout = QHBoxLayout(self.sentiment_strip)
+        strip_layout.setContentsMargins(8, 4, 8, 4)
+        strip_layout.setSpacing(10)
 
-        # Header row: Status badge, KPI chips, and controls
-        header_row = QHBoxLayout()
-        header_row.setSpacing(10)
+        strip_layout.addWidget(QLabel("<b>Market Sentiment:</b>"))
 
         self.sentiment_badge = QLabel("● Analyzing RSS Feeds...")
         self.sentiment_badge.setStyleSheet(
@@ -272,17 +272,13 @@ class MorningScannerTab(QWidget):
             "  background-color: #2c313a;"
             "  color: #abb2bf;"
             "  font-weight: bold;"
-            "  padding: 4px 10px;"
+            "  padding: 3px 8px;"
             "  border-radius: 4px;"
             "  border: 1px solid #3b4048;"
             "  font-size: 11px;"
             "}"
         )
-        header_row.addWidget(self.sentiment_badge)
-
-        self.lbl_news_kpi = QLabel("0 Headlines Analyzed")
-        self.lbl_news_kpi.setStyleSheet("color: #9da5b4; font-size: 11px;")
-        header_row.addWidget(self.lbl_news_kpi)
+        strip_layout.addWidget(self.sentiment_badge)
 
         self.lbl_drastic_badge = QLabel("0 Drastic Catalysts")
         self.lbl_drastic_badge.setStyleSheet(
@@ -295,105 +291,27 @@ class MorningScannerTab(QWidget):
             "  border-radius: 3px;"
             "}"
         )
-        header_row.addWidget(self.lbl_drastic_badge)
+        strip_layout.addWidget(self.lbl_drastic_badge)
 
-        header_row.addStretch()
+        self.lbl_news_kpi = QLabel("0 Headlines Analyzed")
+        self.lbl_news_kpi.setStyleSheet("color: #9da5b4; font-size: 11px;")
+        strip_layout.addWidget(self.lbl_news_kpi)
 
-        # Feed selector
-        header_row.addWidget(QLabel("<b>Feed:</b>"))
-        self.combo_sentiment_feed = QComboBox()
-        self.combo_sentiment_feed.addItem("All Financial Feeds", None)
-        for feed_key in DEFAULT_RSS_FEEDS.keys():
-            self.combo_sentiment_feed.addItem(feed_key, feed_key)
-        self.combo_sentiment_feed.currentIndexChanged.connect(self.refresh_sentiment)
-        header_row.addWidget(self.combo_sentiment_feed)
+        strip_layout.addStretch()
 
-        # Filter: All vs Drastic Only
-        header_row.addWidget(QLabel("<b>Show:</b>"))
-        self.combo_sentiment_filter = QComboBox()
-        self.combo_sentiment_filter.addItem("All Market News", "all")
-        self.combo_sentiment_filter.addItem("🚨 Drastic Catalysts Only", "drastic")
-        self.combo_sentiment_filter.addItem("High & Medium Impact", "high_med")
-        self.combo_sentiment_filter.currentIndexChanged.connect(
-            self._apply_sentiment_table_filter
+        self.btn_open_sentiment = QPushButton("📰 Open Market Sentiment Tab →")
+        self.btn_open_sentiment.setToolTip("View full RSS headlines, feeds, and macro catalysts")
+        self.btn_open_sentiment.setStyleSheet(
+            "QPushButton { background-color: #2c313a; color: #61afef; "
+            "border: 1px solid #3b4048; border-radius: 4px; padding: 4px 10px; "
+            "font-size: 11px; font-weight: bold; } "
+            "QPushButton:hover { background-color: #3e4451; color: #ffffff; "
+            "border-color: #61afef; }"
         )
-        header_row.addWidget(self.combo_sentiment_filter)
+        self.btn_open_sentiment.clicked.connect(self.open_sentiment_tab_requested.emit)
+        strip_layout.addWidget(self.btn_open_sentiment)
 
-        # Refresh News button
-        self.btn_refresh_news = QPushButton("⟳ Refresh News")
-        self.btn_refresh_news.setStyleSheet(
-            "QPushButton { background-color: #1976d2; color: white; font-weight: bold; "
-            "padding: 5px 12px; border-radius: 4px; } "
-            "QPushButton:hover { background-color: #1e88e5; } "
-            "QPushButton:disabled { background-color: #3b4048; color: #7f8c8d; }"
-        )
-        self.btn_refresh_news.clicked.connect(self.refresh_sentiment)
-        header_row.addWidget(self.btn_refresh_news)
-
-        # Toggle Expand/Collapse Table button
-        self.btn_toggle_news = QPushButton("▲ Collapse")
-        self.btn_toggle_news.setStyleSheet(
-            "QPushButton { background-color: #3b4048; color: #abb2bf; "
-            "padding: 5px 10px; border-radius: 4px; border: 1px solid #4b5263; font-size: 11px; } "
-            "QPushButton:hover { background-color: #4b5263; color: white; }"
-        )
-        self.btn_toggle_news.clicked.connect(self._toggle_news_table_visibility)
-        header_row.addWidget(self.btn_toggle_news)
-
-        sentiment_layout.addLayout(header_row)
-
-        # Drastic Catalysts Alert Banner
-        self.alert_banner = QLabel("Checking breaking macro events (War, Budget, Major Policy)...")
-        self.alert_banner.setWordWrap(True)
-        self.alert_banner.setStyleSheet(
-            "QLabel {"
-            "  background-color: #21252b;"
-            "  border: 1px solid #3b4048;"
-            "  border-radius: 4px;"
-            "  padding: 6px 10px;"
-            "  color: #abb2bf;"
-            "  font-size: 11px;"
-            "}"
-        )
-        sentiment_layout.addWidget(self.alert_banner)
-
-        # News Table
-        self.news_table = QTableWidget()
-        news_headers = [
-            "Time",
-            "Sentiment",
-            "Impact",
-            "Catalyst Category",
-            "Headline (Click to open link in browser)",
-            "Source",
-        ]
-        self.news_table.setColumnCount(len(news_headers))
-        self.news_table.setHorizontalHeaderLabels(news_headers)
-        self.news_table.setAlternatingRowColors(True)
-        self.news_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.news_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.news_table.setMaximumHeight(155)
-        self.news_table.setStyleSheet(
-            "QTableWidget { background-color: #1e2227; alternate-background-color: #242930; "
-            "color: #abb2bf; gridline-color: #3b4048; border: 1px solid #3b4048; "
-            "border-radius: 4px; font-size: 11px; } "
-            "QHeaderView::section { background-color: #181a1f; color: #d7dae0; "
-            "font-weight: bold; border: 1px solid #3b4048; padding: 4px 6px; font-size: 11px; } "
-            "QTableWidget::item:selected { background-color: #2c313a; color: #ffffff; }"
-        )
-        news_header = self.news_table.horizontalHeader()
-        news_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        news_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        news_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        news_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        news_header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
-        news_header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-
-        self.news_table.cellClicked.connect(self._on_news_cell_clicked)
-        self.news_table.itemDoubleClicked.connect(self._on_news_row_double_clicked)
-        sentiment_layout.addWidget(self.news_table)
-
-        main_layout.addWidget(self.sentiment_group)
+        main_layout.addWidget(self.sentiment_strip)
 
         # =====================================================================
         # Section 4: Scanner Results Table
@@ -867,32 +785,25 @@ class MorningScannerTab(QWidget):
         if self.sentiment_worker and self.sentiment_worker.isRunning():
             return
 
-        selected_feed = self.combo_sentiment_feed.currentData()
-        self.btn_refresh_news.setEnabled(False)
-        self.btn_refresh_news.setText("Fetching News...")
         self.sentiment_badge.setText("● Fetching RSS News...")
         self.sentiment_badge.setStyleSheet(
             "QLabel { background-color: #2c313a; color: #abb2bf; "
-            "font-weight: bold; padding: 4px 10px; border-radius: 4px; "
+            "font-weight: bold; padding: 3px 8px; border-radius: 4px; "
             "border: 1px solid #3b4048; font-size: 11px; }"
         )
 
-        self.sentiment_worker = SentimentNewsWorker(
-            self.sentiment_analyzer, feed_name=selected_feed
-        )
+        self.sentiment_worker = SentimentNewsWorker(self.sentiment_analyzer)
         self.sentiment_worker.finished_signal.connect(self._on_sentiment_finished)
         self.sentiment_worker.error_signal.connect(self._on_sentiment_error)
         self.sentiment_worker.start()
 
     def _on_sentiment_finished(self, summary: MarketSentimentSummary) -> None:
-        """Handle completion of background sentiment worker and render summary.
+        """Handle completion of background sentiment worker and render strip status.
 
         Args:
             summary (MarketSentimentSummary): Completed sentiment report.
         """
         self.sentiment_summary = summary
-        self.btn_refresh_news.setEnabled(True)
-        self.btn_refresh_news.setText("⟳ Refresh News")
 
         # Color-code overall sentiment badge
         score = summary.sentiment_score
@@ -912,7 +823,7 @@ class MorningScannerTab(QWidget):
         )
         self.sentiment_badge.setStyleSheet(
             f"QLabel {{ background-color: {bg_col}; color: {txt_col}; "
-            f"font-weight: bold; padding: 4px 10px; border-radius: 4px; "
+            f"font-weight: bold; padding: 3px 8px; border-radius: 4px; "
             f"border: 1px solid {txt_col}; font-size: 11px; }}"
         )
 
@@ -939,157 +850,14 @@ class MorningScannerTab(QWidget):
                 "border: 1px solid #388e3c; }"
             )
 
-        # Update Drastic Catalysts Alert Banner
-        if drastic_cnt > 0:
-            banner_lines = [
-                f"<b>🚨 HIGH-IMPACT MARKET CATALYSTS DETECTED ({drastic_cnt} Drastic Movers):</b>"
-            ]
-            for item in summary.high_impact_items[:3]:
-                sent_color = (
-                    "#98c379"
-                    if item.sentiment == "BULLISH"
-                    else "#e06c75"
-                    if item.sentiment == "BEARISH"
-                    else "#abb2bf"
-                )
-                banner_lines.append(
-                    f"• <b>[{item.catalyst_category}]</b> "
-                    f"<span style='color: {sent_color}; font-weight: bold;'>"
-                    f"({item.sentiment})</span> {item.title} <i>({item.source})</i>"
-                )
-            self.alert_banner.setText("<br/>".join(banner_lines))
-            self.alert_banner.setStyleSheet(
-                "QLabel { background-color: #2b1f22; border: 1px solid #e06c75; "
-                "border-radius: 4px; padding: 6px 10px; color: #e5c07b; font-size: 11px; "
-                "line-height: 1.3; }"
-            )
-        else:
-            self.alert_banner.setText(
-                "<b>✓ Stable Macro Sentiment:</b> No critical war outbreaks, "
-                "extreme budget shocks, or emergency policy shifts detected in RSS feeds."
-            )
-            self.alert_banner.setStyleSheet(
-                "QLabel { background-color: #1e2621; border: 1px solid #2ecc71; "
-                "border-radius: 4px; padding: 6px 10px; color: #98c379; font-size: 11px; }"
-            )
-
-        self._populate_sentiment_table()
-
     def _on_sentiment_error(self, err_msg: str) -> None:
         """Handle failure during sentiment news fetch.
 
         Args:
             err_msg (str): Error description message.
         """
-        self.btn_refresh_news.setEnabled(True)
-        self.btn_refresh_news.setText("⟳ Refresh News")
         self.sentiment_badge.setText("● Offline / Fallback")
         self.sentiment_badge.setStyleSheet(
             "QLabel { background-color: #3b4048; color: #abb2bf; font-weight: bold; "
-            "padding: 4px 10px; border-radius: 4px; font-size: 11px; }"
+            "padding: 3px 8px; border-radius: 4px; font-size: 11px; }"
         )
-        self.alert_banner.setText(
-            f"Notice: Live RSS refresh failed ({err_msg}). Displaying fallback catalyst data."
-        )
-
-    def _apply_sentiment_table_filter(self) -> None:
-        """Re-filter news items based on chosen filter dropdown."""
-        self._populate_sentiment_table()
-
-    def _populate_sentiment_table(self) -> None:
-        """Fill news table based on active filter."""
-        if not self.sentiment_summary:
-            return
-
-        filter_mode = self.combo_sentiment_filter.currentData() or "all"
-        items = self.sentiment_summary.all_items
-
-        if filter_mode == "drastic":
-            filtered = [it for it in items if it.is_drastic]
-        elif filter_mode == "high_med":
-            filtered = [it for it in items if it.impact_level in ("HIGH", "MEDIUM")]
-        else:
-            filtered = items
-
-        self.news_table.setRowCount(len(filtered))
-        for row_idx, it in enumerate(filtered):
-            # Col 0: Time
-            time_item = QTableWidgetItem(it.pub_date)
-            time_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.news_table.setItem(row_idx, 0, time_item)
-
-            # Col 1: Sentiment
-            sent_item = QTableWidgetItem(it.sentiment)
-            sent_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            if it.sentiment == "BULLISH":
-                sent_item.setForeground(QColor("#98c379"))
-            elif it.sentiment == "BEARISH":
-                sent_item.setForeground(QColor("#e06c75"))
-            else:
-                sent_item.setForeground(QColor("#abb2bf"))
-            self.news_table.setItem(row_idx, 1, sent_item)
-
-            # Col 2: Impact
-            impact_text = f"🚨 {it.impact_level}" if it.is_drastic else it.impact_level
-            impact_item = QTableWidgetItem(impact_text)
-            impact_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            if it.is_drastic or it.impact_level == "HIGH":
-                impact_item.setForeground(QColor("#e5c07b"))
-            elif it.impact_level == "MEDIUM":
-                impact_item.setForeground(QColor("#61afef"))
-            else:
-                impact_item.setForeground(QColor("#5c6370"))
-            self.news_table.setItem(row_idx, 2, impact_item)
-
-            # Col 3: Catalyst Category
-            cat_item = QTableWidgetItem(it.catalyst_category)
-            cat_item.setToolTip(it.catalyst_reason)
-            self.news_table.setItem(row_idx, 3, cat_item)
-
-            # Col 4: Title / Link
-            title_item = QTableWidgetItem(it.title)
-            title_item.setForeground(QColor("#61afef"))
-            tooltip_msg = (
-                f"{it.title}\n\nCategory: {it.catalyst_category}\n"
-                f"Reason: {it.catalyst_reason}"
-            )
-            if it.description:
-                tooltip_msg += f"\n\n{it.description}"
-            if it.link:
-                tooltip_msg += f"\n\nClick to open: {it.link}"
-                title_item.setData(Qt.ItemDataRole.UserRole, it.link)
-            title_item.setToolTip(tooltip_msg)
-            self.news_table.setItem(row_idx, 4, title_item)
-
-            # Col 5: Source
-            source_item = QTableWidgetItem(it.source)
-            source_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            source_item.setForeground(QColor("#9da5b4"))
-            self.news_table.setItem(row_idx, 5, source_item)
-
-    def _toggle_news_table_visibility(self) -> None:
-        """Toggle table visibility between collapsed and expanded states."""
-        is_visible = self.news_table.isVisible()
-        self.news_table.setVisible(not is_visible)
-        if is_visible:
-            self.btn_toggle_news.setText("▼ Expand News Table")
-        else:
-            self.btn_toggle_news.setText("▲ Collapse News Table")
-
-    def _on_news_cell_clicked(self, row: int, col: int) -> None:
-        """Handle single click on news table, opening article link if title is clicked."""
-        if col == 4:
-            item = self.news_table.item(row, 4)
-            if item:
-                link = item.data(Qt.ItemDataRole.UserRole)
-                if link and str(link).startswith("http"):
-                    QDesktopServices.openUrl(QUrl(str(link)))
-
-    def _on_news_row_double_clicked(self, item: QTableWidgetItem) -> None:
-        """Handle double click on any row cell to open article URL."""
-        row = item.row()
-        title_item = self.news_table.item(row, 4)
-        if title_item:
-            link = title_item.data(Qt.ItemDataRole.UserRole)
-            if link and str(link).startswith("http"):
-                QDesktopServices.openUrl(QUrl(str(link)))

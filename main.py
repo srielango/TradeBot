@@ -23,6 +23,7 @@ from paper_trade_cagr import (
 )
 from paper_trading_engine import PaperTradingEngine
 from rsi_indicator import analyze_rsi
+from screener_data_fetcher import ScreenerDataFetcher
 from strategies.adx_ema_swing import (
     AdxEmaBacktester,
     AdxEmaSwingStrategy,
@@ -88,6 +89,41 @@ def example_ticker_chart_popup(ticker: str = "RELIANCE.NS") -> None:
     dialog = show_ticker_chart_popup(ticker=ticker, repo=repo)
     dialog.show()
     sys.exit(app.exec())
+
+
+def example_screener_fetcher(ticker: str = "INFY.NS") -> None:
+    """Showcase fundamental equity data extraction from Screener.in.
+
+    Args:
+        ticker (str): Ticker symbol to query. Defaults to 'INFY.NS'.
+    """
+    print("=" * 80)
+    print("SCREENER.IN FUNDAMENTAL DATA FETCHER SHOWCASE")
+    print("=" * 80)
+    print(f"Fetching fundamental company metrics for: {ticker}")
+    fetcher = ScreenerDataFetcher()
+    data = fetcher.fetch_fundamentals(ticker)
+    if data:
+        print(f"Symbol:                   {data.symbol}")
+        mcap = f"INR {data.market_cap_cr:,.2f} Cr" if data.market_cap_cr else "N/A"
+        print(f"Market Cap (Cr):          {mcap}")
+        print(f"Stock P/E:                {data.stock_pe}")
+        roe_val = f"{data.roe * 100:.2f}%" if data.roe else "N/A"
+        print(f"ROE:                      {roe_val}")
+        inst_pct = data.institutional_ownership * 100 if data.institutional_ownership else None
+        inst = f"{inst_pct:.2f}%" if inst_pct is not None else "N/A"
+        print(f"Institutional Ownership:  {inst}")
+        growth = f"{data.compounded_profit_growth}%" if data.compounded_profit_growth else "N/A"
+        print(f"Compounded Profit Growth: {growth}")
+        print(f"PEG Ratio:                {data.peg_ratio}")
+        roce_val = f"{data.roce * 100:.2f}%" if data.roce else "N/A"
+        print(f"ROCE:                     {roce_val}")
+        div = f"{data.dividend_yield * 100:.2f}%" if data.dividend_yield else "N/A"
+        print(f"Dividend Yield:           {div}")
+        print(f"Data Source:              {data.source}")
+    else:
+        print(f"No fundamental records discovered for {ticker}.")
+    print("-" * 80)
 
 
 def example_bullish_kicker() -> None:
@@ -1666,6 +1702,12 @@ def main() -> None:
         or "--rss" in sys.argv
     ):
         example_market_sentiment()
+    elif "--screener-fetcher" in sys.argv or "--screener-in" in sys.argv:
+        target_ticker = "INFY.NS"
+        for arg in sys.argv:
+            if arg.startswith("--ticker="):
+                target_ticker = arg.split("=")[1]
+        example_screener_fetcher(ticker=target_ticker)
     else:
         example_trading_dashboard()
 

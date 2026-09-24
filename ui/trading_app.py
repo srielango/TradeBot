@@ -10,12 +10,14 @@ from plotly.subplots import make_subplots
 # PyQt6 modules are compiled C/C++ extensions (.pyd), which static analyzers
 # like Pylint cannot inspect without dynamic loading.
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QFont
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -38,6 +40,7 @@ from stoch_rsi_indicator import calculate_stoch_rsi
 from ui.backtest_tab import BacktestTab
 from ui.data_sync_widget import DataSyncWidget
 from ui.fundamental_screener_tab import FundamentalScreenerTab
+from ui.market_sentiment_tab import MarketSentimentTab
 from ui.morning_scanner_tab import MorningScannerTab
 from ui.nifty_header_widget import NiftyHeaderWidget
 from ui.paper_trading_tab import PaperTradingTab
@@ -418,9 +421,71 @@ class TradingApp(QMainWindow):
 
         sidebar.addStretch()
 
+        # Interactive Chart View with Header Card
+        chart_content_widget = QWidget()
+        chart_content_layout = QVBoxLayout(chart_content_widget)
+        chart_content_layout.setContentsMargins(4, 0, 4, 4)
+        chart_content_layout.setSpacing(6)
+
+        # Header metric card
+        self.chart_header_card = QFrame()
+        self.chart_header_card.setStyleSheet(
+            "QFrame { background-color: #21252b; border: 1px solid #3b4048; "
+            "border-radius: 6px; padding: 4px 12px; }"
+        )
+        header_card_layout = QHBoxLayout(self.chart_header_card)
+        header_card_layout.setContentsMargins(8, 4, 8, 4)
+        header_card_layout.setSpacing(12)
+
+        # Ticker Title & Name
+        title_box = QVBoxLayout()
+        title_box.setSpacing(2)
+        self.lbl_chart_symbol = QLabel("^NSEI")
+        sym_font = QFont()
+        sym_font.setPointSize(15)
+        sym_font.setBold(True)
+        self.lbl_chart_symbol.setFont(sym_font)
+        self.lbl_chart_symbol.setStyleSheet("color: #61afef; font-weight: bold;")
+        title_box.addWidget(self.lbl_chart_symbol)
+
+        self.lbl_chart_company = QLabel("Nifty 50 Index • Benchmark")
+        self.lbl_chart_company.setStyleSheet("color: #7f848e; font-size: 11px;")
+        title_box.addWidget(self.lbl_chart_company)
+        header_card_layout.addLayout(title_box, stretch=2)
+
+        # Price Readout
+        self.lbl_chart_price = QLabel("—")
+        price_font = QFont()
+        price_font.setPointSize(14)
+        price_font.setBold(True)
+        self.lbl_chart_price.setFont(price_font)
+        self.lbl_chart_price.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        header_card_layout.addWidget(self.lbl_chart_price)
+
+        self.lbl_chart_change = QLabel("—")
+        self.lbl_chart_change.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.lbl_chart_change.setStyleSheet("font-size: 12px; font-weight: bold;")
+        header_card_layout.addWidget(self.lbl_chart_change)
+
+        header_card_layout.addSpacing(10)
+
+        self.lbl_chart_range = QLabel("High: — | Low: —")
+        self.lbl_chart_range.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        self.lbl_chart_range.setStyleSheet("color: #9da5b4; font-size: 11px;")
+        header_card_layout.addWidget(self.lbl_chart_range)
+
+        chart_content_layout.addWidget(self.chart_header_card)
+
         # Interactive Chart View
         self.plotly_view = QWebEngineView(self.chart_tab)
-        chart_tab_layout.addWidget(self.plotly_view)
+        chart_content_layout.addWidget(self.plotly_view, stretch=1)
+        chart_tab_layout.addWidget(chart_content_widget, stretch=1)
         self.tabs.addTab(self.chart_tab, 'Analysis Terminal')
 
         # Select Nifty 50 as default *after* all widgets are fully constructed
@@ -437,10 +502,17 @@ class TradingApp(QMainWindow):
         self.screener_tab.ticker_selected.connect(self.on_screener_ticker_selected)
         self.tabs.addTab(self.screener_tab, 'Fundamental Screener')
 
-        # Scanner Tab (Stock Signals & Market Sentiment)
+        # Scanner Tab (Stock Signals)
         self.scanner_tab = MorningScannerTab(self.repo)
         self.scanner_tab.ticker_selected.connect(self.on_scanner_ticker_selected)
         self.tabs.addTab(self.scanner_tab, 'Scanner')
+
+        # Dedicated Market Sentiment Tab
+        self.sentiment_tab = MarketSentimentTab()
+        self.scanner_tab.open_sentiment_tab_requested.connect(
+            lambda: self.tabs.setCurrentWidget(self.sentiment_tab)
+        )
+        self.tabs.addTab(self.sentiment_tab, 'Market Sentiment')
 
         # Paper Trading Dashboard Tab
         self.paper_trading_tab = PaperTradingTab(self.repo)
@@ -621,16 +693,16 @@ class TradingApp(QMainWindow):
         # Determine row layout and heights dynamically
         num_sub = len(active_subplots)
         if num_sub == 0:
-            num_rows = 3
-            row_heights = [0.6, 0.2, 0.2]
-            subplot_titles = ('Price', 'Volume', 'Indicators')
+            num_rows = 2
+            row_heights = [0.75, 0.25]
+            subplot_titles = ('Price', 'Volume')
         elif num_sub == 1:
             num_rows = 3
-            row_heights = [0.6, 0.2, 0.2]
+            row_heights = [0.60, 0.18, 0.22]
             subplot_titles = ('Price', 'Volume', active_subplots[0])
         elif num_sub == 2:
             num_rows = 4
-            row_heights = [0.5, 0.15, 0.175, 0.175]
+            row_heights = [0.50, 0.16, 0.17, 0.17]
             subplot_titles = ('Price', 'Volume', active_subplots[0], active_subplots[1])
         elif num_sub == 3:
             num_rows = 5
@@ -638,8 +710,8 @@ class TradingApp(QMainWindow):
             subplot_titles = tuple(['Price', 'Volume'] + active_subplots)
         else:  # 4 or more sub-indicators
             num_rows = 2 + num_sub
-            sub_h = 0.50 / num_sub
-            row_heights = [0.40, 0.10] + [sub_h] * num_sub
+            sub_h = 0.48 / num_sub
+            row_heights = [0.40, 0.12] + [sub_h] * num_sub
             subplot_titles = tuple(['Price', 'Volume'] + active_subplots)
 
         def get_sub_row(name: str) -> int:
@@ -652,11 +724,11 @@ class TradingApp(QMainWindow):
             cols=1,
             shared_xaxes=True,
             row_heights=row_heights,
-            vertical_spacing=0.05,
+            vertical_spacing=0.04,
             subplot_titles=subplot_titles,
         )
 
-        # Subplot 1: Price Candlesticks
+        # Subplot 1: Price Candlesticks with TradingView color palette
         fig.add_trace(
             go.Candlestick(
                 x=df_display['date'],
@@ -665,19 +737,25 @@ class TradingApp(QMainWindow):
                 low=df_display['low'],
                 close=df_display['close'],
                 name='Price',
+                increasing_line_color="#26a69a",
+                decreasing_line_color="#ef5350",
             ),
             row=1,
             col=1,
         )
 
-        # Subplot 2: Volume Bars
+        # Subplot 2: Volume Bars with bull/bear dynamic color-coding
+        vol_colors = [
+            "#26a69a" if c >= o else "#ef5350"
+            for o, c in zip(df_display["open"], df_display["close"])
+        ]
         fig.add_trace(
             go.Bar(
                 x=df_display['date'],
                 y=df_display['volume'],
                 name='Volume',
-                marker_color='lightblue',
-                opacity=0.6,
+                marker_color=vol_colors,
+                opacity=0.65,
             ),
             row=2,
             col=1,
@@ -1172,23 +1250,13 @@ class TradingApp(QMainWindow):
                     "Beta indicator cannot be rendered."
                 )
 
-        # Add empty placeholder in row 3 when no sub-indicator occupies it
-        if not active_subplots:
-            fig.add_trace(
-                go.Scatter(
-                    x=df_display['date'],
-                    y=[None] * len(df_display),
-                    showlegend=False,
-                    hoverinfo='skip',
-                ),
-                row=3,
-                col=1,
-            )
-
-        # Visual layout configuration
+        # Visual layout configuration with seamless dark background & tight margins
         fig.update_layout(
             template='plotly_dark',
             xaxis_rangeslider_visible=False,
+            margin=dict(l=50, r=40, t=30, b=30),
+            paper_bgcolor="#1e2227",
+            plot_bgcolor="#1e2227",
             legend={
                 'orientation': 'h',
                 'yanchor': 'bottom',
@@ -1197,7 +1265,7 @@ class TradingApp(QMainWindow):
                 'x': 1,
             },
         )
-        fig.update_yaxes(title_text="Price", row=1, col=1)
+        fig.update_yaxes(title_text="Price (₹)", row=1, col=1)
         fig.update_yaxes(title_text="Volume", row=2, col=1)
 
         # Always show x-axis label on the bottom-most subplot row
@@ -1214,6 +1282,36 @@ class TradingApp(QMainWindow):
         # Render HTML string into WebEngine view
         html = fig.to_html(include_plotlyjs='cdn')
         self.plotly_view.setHtml(html)
+
+        # Update Header Metric Card readout
+        clean_sym = display_string.split(" ")[0].strip()
+        metadata = self.repo.get_stock_metadata()
+        company_name = metadata.get(clean_sym, clean_sym)
+        self.lbl_chart_symbol.setText(clean_sym)
+        self.lbl_chart_company.setText(
+            f"{company_name} • {'Index Benchmark' if clean_sym.startswith('^') else 'NSE Equity'}"
+        )
+
+        first_close = float(df_display['close'].iloc[0])
+        latest_close = float(df_display['close'].iloc[-1])
+        net_change = latest_close - first_close
+        pct_change = (net_change / first_close * 100.0) if first_close > 0 else 0.0
+
+        period_high = float(df_display['high'].max())
+        period_low = float(df_display['low'].min())
+
+        color_hex = "#26a69a" if net_change >= 0 else "#ef5350"
+        sign_str = "+" if net_change >= 0 else ""
+
+        self.lbl_chart_price.setText(f"₹{latest_close:,.2f}")
+        self.lbl_chart_price.setStyleSheet(f"color: {color_hex}; font-weight: bold;")
+        self.lbl_chart_change.setText(
+            f"{sign_str}₹{net_change:,.2f} ({sign_str}{pct_change:.2f}%)"
+        )
+        self.lbl_chart_change.setStyleSheet(f"color: {color_hex}; font-weight: bold;")
+        self.lbl_chart_range.setText(
+            f"Period High: ₹{period_high:,.2f} | Low: ₹{period_low:,.2f} | Bars: {len(df_display)}"
+        )
 
     def check_database_health(self):
         """Verify presence of database file and populated securities on startup."""
