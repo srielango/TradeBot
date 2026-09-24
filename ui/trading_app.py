@@ -437,10 +437,10 @@ class TradingApp(QMainWindow):
         self.screener_tab.ticker_selected.connect(self.on_screener_ticker_selected)
         self.tabs.addTab(self.screener_tab, 'Fundamental Screener')
 
-        # Morning Scanner Tab
+        # Scanner Tab (Stock Signals & Market Sentiment)
         self.scanner_tab = MorningScannerTab(self.repo)
         self.scanner_tab.ticker_selected.connect(self.on_scanner_ticker_selected)
-        self.tabs.addTab(self.scanner_tab, 'Morning Scanner')
+        self.tabs.addTab(self.scanner_tab, 'Scanner')
 
         # Paper Trading Dashboard Tab
         self.paper_trading_tab = PaperTradingTab(self.repo)
@@ -555,7 +555,7 @@ class TradingApp(QMainWindow):
         show_ticker_chart_popup(ticker_str, repo=self.repo, parent=self)
 
     def on_scanner_ticker_selected(self, ticker_str: str) -> None:
-        """Handle ticker selection from Morning Scanner by opening 3-month chart popup.
+        """Handle ticker selection from Scanner tab by opening 3-month chart popup.
 
         Args:
             ticker_str (str): Selected ticker string, e.g. 'INFY.NS (STOCK)'.

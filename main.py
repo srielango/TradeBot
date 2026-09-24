@@ -9,11 +9,12 @@ from PyQt6.QtWidgets import QApplication
 
 from adx_indicator import analyze_adx
 from back_test_engine import BacktestEngine
-from daily_data_updater import run_full_daily_update
+from daily_data_updater import run_daily_sync
 from data_sync_service import DataSyncService
 from entry_stop_loss_validator import validate_entry_stop_losses
 from fundamental_screener import FundamentalScreener
 from market_repository import MarketRepository
+from market_sentiment_analyzer import MarketSentimentAnalyzer
 from morning_scanner import MorningScanner
 from paper_trade_cagr import (
     calculate_portfolio_cagr,
@@ -1505,18 +1506,62 @@ def example_daily_data_updater() -> None:
     print(f"Last Sync Fundamentals      : {info.get('last_sync_funds', 0)}")
     print(f"Auto-Sync On App Startup    : {service.get_auto_sync_on_startup()}")
     print("-" * 80)
-    print("Executing sample data synchronization...")
+    print("Executing market data synchronization (price bars only)...")
 
     def progress_printer(cur: int, tot: int, msg: str) -> None:
         pct = int((cur / max(1, tot)) * 100)
         print(f"[{pct:>3}%] ({cur:>3}/{tot}) {msg}")
 
-    bars, funds = run_full_daily_update(progress_callback=progress_printer)
+    bars = run_daily_sync(progress_callback=progress_printer)
     print("=" * 80)
+    print(f"Synchronization Complete! Added {bars} new price bars.")
+    print("Note: Fundamentals are synced separately via the Fundamental Screener tab.")
+    print("=" * 80)
+
+
+def example_market_sentiment() -> None:
+    """Showcase market sentiment analysis and drastic macro catalyst detection from RSS feeds."""
+    print("=" * 80)
+    print("MARKET SENTIMENT & MACRO CATALYST ANALYSIS SHOWCASE")
+    print("=" * 80)
+    analyzer = MarketSentimentAnalyzer()
+    print("Ingesting live market RSS feeds (Economic Times, Livemint, Moneycontrol, Google)...")
+    summary = analyzer.analyze_market_sentiment()
+
+    print(f"Overall Market Sentiment     : {summary.overall_sentiment}")
+    print(f"Composite Sentiment Score    : {summary.sentiment_score:+0.2f}")
+    print(f"Total News Headlines Analyzed: {len(summary.all_items)}")
     print(
-        f"Synchronization Complete! Added {bars} bars, "
-        f"updated {funds} stock fundamentals."
+        f"Sentiment Breakdown          : {summary.bullish_count} Bullish | "
+        f"{summary.bearish_count} Bearish | {summary.neutral_count} Neutral"
     )
+    print(f"Drastic Catalysts Detected   : {summary.drastic_events_count}")
+    print("-" * 80)
+    print("Summary Alert Headline:")
+    print(f"  {summary.summary_headline}")
+    print("=" * 80)
+
+    if summary.high_impact_items:
+        print("\nTOP HIGH-IMPACT / DRASTIC MARKET CATALYSTS:")
+        print("-" * 80)
+        for idx, item in enumerate(summary.high_impact_items[:6], start=1):
+            safe_title = item.title.encode("ascii", "replace").decode("ascii")
+            print(
+                f"[{idx}] {item.catalyst_category} | Impact: {item.impact_level} | "
+                f"Sentiment: {item.sentiment} ({item.sentiment_score:+0.2f})"
+            )
+            print(f"    Headline : {safe_title}")
+            print(f"    Source   : {item.source} ({item.pub_date})")
+            print(f"    Trigger  : {item.catalyst_reason}")
+            print()
+    else:
+        print("No critical geopolitical, budget, or systemic crisis catalysts detected.")
+
+    print("-" * 80)
+    print(f"Recent Headlines ({min(5, len(summary.all_items))} of {len(summary.all_items)}):")
+    for item in summary.all_items[:5]:
+        safe_title = item.title.encode("ascii", "replace").decode("ascii")
+        print(f"  [{item.sentiment:<7}] [{item.impact_level:<6}] {safe_title} ({item.source})")
     print("=" * 80)
 
 
@@ -1614,6 +1659,13 @@ def main() -> None:
             if arg.startswith("--ticker="):
                 target_ticker = arg.split("=")[1]
         example_ticker_chart_popup(ticker=target_ticker)
+    elif (
+        "--sentiment" in sys.argv
+        or "--market-sentiment" in sys.argv
+        or "--news-sentiment" in sys.argv
+        or "--rss" in sys.argv
+    ):
+        example_market_sentiment()
     else:
         example_trading_dashboard()
 

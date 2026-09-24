@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from data_sync_service import DataSyncService
 from fundamental_screener import FundamentalScreener
 from market_repository import MarketRepository
 from ui.ticker_chart_popup import TickerChartPopupDialog
@@ -582,6 +583,7 @@ class FundamentalScreenerTab(QWidget):
         """Handle background sync completion and refresh UI view."""
         self.btn_sync.setEnabled(True)
         self.progress_bar.setVisible(False)
+        DataSyncService.get_instance().record_fundamentals_sync(success)
         QMessageBox.information(
             self,
             "Sync Complete",

@@ -11,7 +11,7 @@ from typing import Any
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 from config import DATA_DIR
-from daily_data_updater import get_latest_database_bar_date, run_full_daily_update
+from daily_data_updater import get_latest_database_bar_date, run_daily_sync
 
 SYNC_SETTINGS_PATH: Path = DATA_DIR / "sync_settings.json"
 
@@ -42,12 +42,12 @@ class DataSyncWorker(QThread):
         return self._is_cancelled
 
     def run(self) -> None:
-        """Run daily price bars and fundamentals update pipeline."""
+        """Run daily price bars update pipeline without syncing fundamentals."""
         try:
             def on_progress(current: int, total: int, msg: str) -> None:
                 self.progress_updated.emit(current, total, msg)
 
-            bars, funds = run_full_daily_update(
+            bars = run_daily_sync(
                 progress_callback=on_progress,
                 is_cancelled=self.is_cancelled,
             )
@@ -55,10 +55,8 @@ class DataSyncWorker(QThread):
             if self._is_cancelled:
                 self.sync_cancelled.emit()
             else:
-                summary = (
-                    f"Sync complete: {bars} new price bars and {funds} fundamentals updated."
-                )
-                self.sync_finished.emit(bars, funds, summary)
+                summary = f"Sync complete: {bars} new price bars updated."
+                self.sync_finished.emit(bars, 0, summary)
 
         except (ValueError, KeyError, IndexError, OSError) as err:
             self.sync_error.emit(f"Sync error: {err}")
@@ -161,6 +159,15 @@ class DataSyncService(QObject):
         """
         return get_latest_database_bar_date()
 
+    def record_fundamentals_sync(self, count: int) -> None:
+        """Record the count of stock fundamentals updated from screener sync.
+
+        Args:
+            count (int): Number of stock fundamentals updated.
+        """
+        self._settings["last_sync_funds"] = count
+        self._save_settings()
+
     # ── Synchronization Execution ────────────────────────────────────────────
 
     def is_syncing(self) -> bool:
@@ -218,7 +225,8 @@ class DataSyncService(QObject):
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
         self._settings["last_sync_timestamp"] = now_str
         self._settings["last_sync_bars"] = bars
-        self._settings["last_sync_funds"] = funds
+        if funds > 0:
+            self._settings["last_sync_funds"] = funds
         self._settings["last_sync_status"] = "Success"
         self._save_settings()
 

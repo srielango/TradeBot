@@ -246,17 +246,27 @@ def update_daily_fundamentals(
 def run_full_daily_update(
     progress_callback: Callable[[int, int, str], None] | None = None,
     is_cancelled: Callable[[], bool] | None = None,
+    sync_fundamentals: bool = False,
 ) -> tuple[int, int]:
-    """Execute complete daily pipeline: price bars sync followed by fundamental metrics.
+    """Execute daily market data pipeline: price bars sync, and optional fundamentals.
 
     Args:
         progress_callback: Optional callable receiving (current_step, total_steps, message).
         is_cancelled: Optional callable returning True if synchronization should abort.
+        sync_fundamentals (bool): Whether to also update fundamentals. Defaults to False.
 
     Returns:
         tuple[int, int]: (new_price_bars_count, updated_fundamentals_count).
     """
-    # Count total steps to scale progress smoothly
+    if not sync_fundamentals:
+        # Market data sync only (no fundamentals sync)
+        bars_added = run_daily_sync(
+            progress_callback=progress_callback,
+            is_cancelled=is_cancelled,
+        )
+        return bars_added, 0
+
+    # Count total steps to scale progress smoothly when syncing both
     with sqlite3.connect(DB_PATH, timeout=30.0) as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM securities")
@@ -302,4 +312,4 @@ def run_full_daily_update(
 
 
 if __name__ == "__main__":
-    run_full_daily_update()
+    run_daily_sync()
