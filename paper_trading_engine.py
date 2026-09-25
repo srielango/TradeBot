@@ -16,6 +16,7 @@ import pandas as pd
 import yfinance as yf
 
 from config import DB_PATH
+from paper_order_manager import PaperOrderManager
 
 # Fixed risk management framework parameters
 STARTING_PORTFOLIO_BALANCE = 500_000.0  # INR 5 Lakhs virtual capital
@@ -38,6 +39,7 @@ class PaperTradingEngine:
         """
         self.db_path = str(os.path.abspath(db_path))
         self.init_database()
+        self.order_manager = PaperOrderManager(self, db_path=self.db_path)
 
     def _get_connection(self) -> sqlite3.Connection:
         """Create and return a database connection with row factory enabled."""
@@ -116,7 +118,9 @@ class PaperTradingEngine:
                 """
                 UPDATE paper_trades
                 SET exit_date = SUBSTR(exit_timestamp, 1, 10)
-                WHERE status = 'CLOSED' AND (exit_date IS NULL OR exit_date = '') AND exit_timestamp IS NOT NULL
+                WHERE status = 'CLOSED'
+                  AND (exit_date IS NULL OR exit_date = '')
+                  AND exit_timestamp IS NOT NULL
                 """
             )
 
@@ -258,7 +262,9 @@ class PaperTradingEngine:
             raise PositionSizingError("A valid ticker symbol is required.")
 
         if side != "BUY":
-            raise PositionSizingError("Only BUY (long) swing orders are supported on equity stocks.")
+            raise PositionSizingError(
+                "Only BUY (long) swing orders are supported on equity stocks."
+            )
 
         if sell_target is not None and sell_target <= entry_price:
             raise PositionSizingError(
@@ -286,7 +292,8 @@ class PaperTradingEngine:
 
             if quantity <= 0:
                 raise PositionSizingError(
-                    "Calculated allowed quantity is 0 shares. Verify price levels and available cash."
+                    "Calculated allowed quantity is 0 shares. "
+                    "Verify price levels and available cash."
                 )
 
             total_cost = quantity * entry_price
@@ -387,9 +394,10 @@ class PaperTradingEngine:
             entry_price = float(trade["entry_price"])
             ticker = str(trade["ticker"])
             side = str(trade["side"])
+            raw_entry = str(trade.get("entry_date") or "").strip()
             entry_d = (
-                str(trade.get("entry_date")).strip()
-                if trade.get("entry_date") and str(trade.get("entry_date")).strip() not in ("", "None")
+                raw_entry
+                if raw_entry and raw_entry not in ("", "None")
                 else str(trade["timestamp"])[:10]
             )
 
@@ -631,9 +639,10 @@ class PaperTradingEngine:
                 if exit_date
                 else now_dt.strftime("%Y-%m-%d")
             )
+            raw_entry_c = str(trade.get("entry_date") or "").strip()
             entry_d = (
-                str(trade.get("entry_date")).strip()
-                if trade.get("entry_date") and str(trade.get("entry_date")).strip() not in ("", "None")
+                raw_entry_c
+                if raw_entry_c and raw_entry_c not in ("", "None")
                 else str(trade["timestamp"])[:10]
             )
             formatted_reason = f"{exit_reason} (Trade #{trade_id})"
@@ -863,7 +872,11 @@ class PaperTradingEngine:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT COALESCE(SUM(realized_pnl), 0.0) as total_pnl FROM paper_trades WHERE status = 'CLOSED'"
+                """
+                SELECT COALESCE(SUM(realized_pnl), 0.0) as total_pnl
+                FROM paper_trades
+                WHERE status = 'CLOSED'
+                """
             )
             realized_row = cursor.fetchone()
             total_realized_pnl = float(realized_row["total_pnl"]) if realized_row else 0.0
@@ -890,6 +903,11 @@ class PaperTradingEngine:
                 else 0.0
             ),
             "open_count": len(open_trades),
+            "pending_count": (
+                len(self.order_manager.get_pending_orders())
+                if hasattr(self, "order_manager")
+                else 0
+            ),
         }
 
     def reset_portfolio(self, starting_cash: float = STARTING_PORTFOLIO_BALANCE) -> None:
@@ -911,6 +929,8 @@ class PaperTradingEngine:
                 (starting_cash, starting_cash, now),
             )
             conn.commit()
+        if hasattr(self, "order_manager"):
+            self.order_manager.reset_orders()
 
     def get_nifty50_tickers(self) -> list[dict[str, str]]:
         """Fetch list of active Nifty 50 equity stock symbols and company names from database.
@@ -1008,3 +1028,78 @@ class PaperTradingEngine:
                 print(f"Batch quote download error: {err}")
 
         return price_map
+
+    def submit_order(
+        self,
+        ticker: str,
+        buy_price: float | None = None,
+        stop_loss: float = 0.0,
+        sell_target: float | None = None,
+        side: str = "BUY",
+        override_quantity: int | None = None,
+        current_cmp: float | None = None,
+        market_open_override: bool | None = None,
+    ) -> dict[str, Any]:
+        """Submit a paper trade order via the order manager.
+
+        Args:
+            ticker (str): Security ticker symbol.
+            buy_price (float | None): Target limit price (buy on or below), or None for CMP.
+            stop_loss (float): Mandatory stop loss level.
+            sell_target (float | None): Optional profit target level.
+            side (str): Order side ('BUY').
+            override_quantity (int | None): Explicit quantity override if specified.
+            current_cmp (float | None): Current market price if already fetched.
+            market_open_override (bool | None): Explicit market open flag for simulation.
+
+        Returns:
+            dict[str, Any]: Order submission outcome details.
+        """
+        return self.order_manager.submit_order(
+            ticker=ticker,
+            buy_price=buy_price,
+            stop_loss=stop_loss,
+            sell_target=sell_target,
+            side=side,
+            override_quantity=override_quantity,
+            current_cmp=current_cmp,
+            market_open_override=market_open_override,
+        )
+
+    def process_pending_orders(
+        self,
+        price_map: dict[str, float] | None = None,
+        market_open_override: bool | None = None,
+    ) -> list[dict[str, Any]]:
+        """Evaluate pending orders and execute any meeting market hours and price limits.
+
+        Args:
+            price_map (dict[str, float] | None): Dictionary mapping ticker to live CMP.
+            market_open_override (bool | None): Explicit market open flag for simulation.
+
+        Returns:
+            list[dict[str, Any]]: List of executed order trade confirmations.
+        """
+        return self.order_manager.process_pending_orders(
+            price_map=price_map,
+            market_open_override=market_open_override,
+        )
+
+    def get_pending_orders(self) -> list[dict[str, Any]]:
+        """Retrieve all currently pending orders awaiting market open or limit trigger.
+
+        Returns:
+            list[dict[str, Any]]: List of pending order dictionaries.
+        """
+        return self.order_manager.get_pending_orders()
+
+    def cancel_order(self, order_id: int) -> bool:
+        """Cancel a pending order before execution.
+
+        Args:
+            order_id (int): Order identifier to cancel.
+
+        Returns:
+            bool: True if order was successfully cancelled, False otherwise.
+        """
+        return self.order_manager.cancel_order(order_id)

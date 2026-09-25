@@ -10,7 +10,7 @@ from typing import Any
 
 # pylint: disable=no-name-in-module
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtGui import QColor, QDoubleValidator, QFont
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QSplitter,
@@ -44,10 +45,11 @@ from ui.ticker_chart_popup import TickerChartPopupDialog
 
 
 class PaperTradingWorker(QThread):
-    """Background worker thread to fetch live quotes and trigger exit evaluations."""
+    """Background worker thread to fetch live quotes and trigger exit/order evaluations."""
 
     prices_updated = pyqtSignal(dict)
     trades_exited = pyqtSignal(list)
+    orders_executed = pyqtSignal(list)
     status_updated = pyqtSignal(str)
     error_occurred = pyqtSignal(str)
 
@@ -65,36 +67,56 @@ class PaperTradingWorker(QThread):
         self._manual_trigger = False
 
     def run(self) -> None:
-        """Continuously poll live market prices for active open positions when market is open."""
+        """Continuously poll live market prices for active open positions and pending orders."""
         while self._is_running:
             try:
                 is_open, desc = is_market_open_ist()
+                open_trades = self.engine.get_open_trades()
+                pending_orders = self.engine.get_pending_orders()
+
+                tickers_set = {t["ticker"] for t in open_trades} | {
+                    o["ticker"] for o in pending_orders
+                }
+                tickers = list(tickers_set)
+
                 if not is_open and not self._manual_trigger:
+                    pending_msg = (
+                        f" - {len(pending_orders)} pending order(s) waiting for open"
+                        if pending_orders
+                        else ""
+                    )
                     self.status_updated.emit(
-                        f"Monitoring paused: Market closed ({desc} - ● NSE CLOSED)"
+                        f"Monitoring paused: Market closed ({desc} - ● NSE CLOSED){pending_msg}"
                     )
                 else:
-                    open_trades = self.engine.get_open_trades()
-                    if open_trades:
-                        tickers = list({t["ticker"] for t in open_trades})
+                    if tickers:
                         self.status_updated.emit(
-                            f"Fetching live quotes for {len(tickers)} active position(s)..."
+                            f"Fetching live quotes for {len(tickers)} security(ies)..."
                         )
-
                         price_map = self.engine.fetch_live_quotes_batch(tickers)
                         if price_map:
-                            exited_trades = self.engine.evaluate_open_trades(price_map)
-                            self.prices_updated.emit(price_map)
+                            if open_trades:
+                                exited_trades = self.engine.evaluate_open_trades(price_map)
+                                self.prices_updated.emit(price_map)
+                                if exited_trades:
+                                    self.trades_exited.emit(exited_trades)
 
-                            if exited_trades:
-                                self.trades_exited.emit(exited_trades)
+                            # Evaluate pending orders when NSE market is open
+                            if is_open and pending_orders:
+                                executed_orders = self.engine.process_pending_orders(
+                                    price_map=price_map
+                                )
+                                if executed_orders:
+                                    self.orders_executed.emit(executed_orders)
 
                         now_str = datetime.now(timezone.utc).astimezone().strftime("%H:%M:%S")
                         self.status_updated.emit(
-                            f"Monitoring active: {len(tickers)} stock(s) updated at {now_str}"
+                            f"Monitoring active: {len(tickers)} security(ies) updated at {now_str}"
                         )
                     else:
-                        self.status_updated.emit("Monitoring idle: No active open positions.")
+                        self.status_updated.emit(
+                            "Monitoring idle: No active positions or pending orders."
+                        )
 
             except (ValueError, KeyError, IndexError, TypeError, AttributeError) as err:
                 self.error_occurred.emit(str(err))
@@ -131,8 +153,11 @@ class PaperTradingTab(QWidget):
         self.repo = repo or MarketRepository()
         self.worker: PaperTradingWorker | None = None
         self._active_chart_dialog: TickerChartPopupDialog | None = None
+        self._current_cmp: float = 0.0
+        self._latest_prices: dict[str, float] = {}
 
         self.init_ui()
+        self.fetch_cmp_for_selected()
         self.refresh_all_views()
         self.start_background_worker()
 
@@ -150,9 +175,13 @@ class PaperTradingTab(QWidget):
 
         self.kpi_cash = self._create_kpi_card("Available Cash", "₹5,00,000.00", "#abb2bf")
         self.kpi_invested = self._create_kpi_card("Active Deployed Capital", "₹0.00", "#61afef")
-        self.kpi_unrealized = self._create_kpi_card("Open Unrealized PnL", "₹0.00 (0.0%)", "#98c379")
+        self.kpi_unrealized = self._create_kpi_card(
+            "Open Unrealized PnL", "₹0.00 (0.0%)", "#98c379"
+        )
         self.kpi_realized = self._create_kpi_card("Realized PnL", "₹0.00", "#98c379")
-        self.kpi_total_val = self._create_kpi_card("Total Portfolio Net Worth", "₹5,00,000.00", "#e5c07b")
+        self.kpi_total_val = self._create_kpi_card(
+            "Total Portfolio Net Worth", "₹5,00,000.00", "#e5c07b"
+        )
 
         banner_layout.addWidget(self.kpi_cash["frame"])
         banner_layout.addWidget(self.kpi_invested["frame"])
@@ -309,14 +338,61 @@ class PaperTradingTab(QWidget):
 
         form_layout.addLayout(fetch_row)
 
-        # 2. Entry Price
-        form_layout.addWidget(QLabel("<b>Entry Price (₹):</b>"))
-        self.spin_entry = QDoubleSpinBox()
-        self.spin_entry.setRange(0.01, 1_000_000.00)
-        self.spin_entry.setDecimals(2)
-        self.spin_entry.setValue(280.00)
-        self.spin_entry.valueChanged.connect(self.recalculate_position_size)
-        form_layout.addWidget(self.spin_entry)
+        # 2. Buy Price Option (Buy on or below a specific price, default CMP)
+        buy_header_layout = QHBoxLayout()
+        lbl_buy_title = QLabel("<b>Buy Price (₹) [Buy on or below]:</b>")
+        buy_header_layout.addWidget(lbl_buy_title)
+
+        self.lbl_cmp_badge = QLabel("CMP: --")
+        self.lbl_cmp_badge.setStyleSheet(
+            "color: #61afef; font-size: 11px; font-weight: bold; padding: 1px 6px; "
+            "background-color: #1e2227; border: 1px solid #3b4048; border-radius: 3px;"
+        )
+        buy_header_layout.addWidget(self.lbl_cmp_badge)
+        buy_header_layout.addStretch()
+        form_layout.addLayout(buy_header_layout)
+
+        buy_input_row = QHBoxLayout()
+        self.input_buy_price = QLineEdit()
+        self.input_buy_price.setPlaceholderText("Default: CMP (Leave blank to buy at CMP)")
+        self.input_buy_price.setStyleSheet(
+            "QLineEdit { background-color: #282c34; color: #ffffff; "
+            "border: 1px solid #3b4048; border-radius: 4px; padding: 5px 8px; font-size: 12px; } "
+            "QLineEdit:focus { border: 1px solid #61afef; }"
+        )
+        validator = QDoubleValidator(0.01, 1_000_000.00, 2, self)
+        validator.setNotation(QDoubleValidator.Notation.StandardNotation)
+        self.input_buy_price.setValidator(validator)
+        self.input_buy_price.textChanged.connect(self.recalculate_position_size)
+        buy_input_row.addWidget(self.input_buy_price, stretch=1)
+
+        self.btn_set_cmp = QPushButton("⚡ Use CMP")
+        self.btn_set_cmp.setStyleSheet(
+            "QPushButton { background-color: #2c313a; color: #61afef; font-size: 11px; "
+            "padding: 5px 8px; border: 1px solid #3b4048; border-radius: 4px; font-weight: bold; } "
+            "QPushButton:hover { background-color: #3e4451; color: #ffffff; }"
+        )
+        self.btn_set_cmp.setToolTip("Fill Buy Price with live Current Market Price")
+        self.btn_set_cmp.clicked.connect(self.fetch_cmp_for_selected)
+        buy_input_row.addWidget(self.btn_set_cmp)
+
+        self.btn_clear_buy_price = QPushButton("Clear")
+        self.btn_clear_buy_price.setStyleSheet(
+            "QPushButton { background-color: #2c313a; color: #abb2bf; font-size: 11px; "
+            "padding: 5px 8px; border: 1px solid #3b4048; border-radius: 4px; } "
+            "QPushButton:hover { background-color: #3e4451; color: #e06c75; }"
+        )
+        self.btn_clear_buy_price.setToolTip("Clear to buy at market CMP (no limit price)")
+        self.btn_clear_buy_price.clicked.connect(self._on_clear_buy_price_clicked)
+        buy_input_row.addWidget(self.btn_clear_buy_price)
+
+        form_layout.addLayout(buy_input_row)
+
+        self.lbl_buy_mode_hint = QLabel("• Mode: At CMP (Market order)")
+        self.lbl_buy_mode_hint.setStyleSheet(
+            "color: #98c379; font-size: 11px; font-style: italic;"
+        )
+        form_layout.addWidget(self.lbl_buy_mode_hint)
 
         # 3. Mandatory Stop Loss
         form_layout.addWidget(QLabel("<b>Mandatory Stop Loss (₹):</b>"))
@@ -459,7 +535,49 @@ class PaperTradingTab(QWidget):
         open_layout.addWidget(self.table_open)
         layout.addWidget(open_group, stretch=1)
 
-        # Section B: Trade History Journal Table
+        # Section B: Pending / Waiting Orders Table
+        pending_group = QGroupBox(
+            "Pending / Waiting Orders (Awaiting NSE Open & Limit Triggers)"
+        )
+        pending_group.setStyleSheet(
+            "QGroupBox { color: #abb2bf; font-weight: bold; border: 1px solid #3b4048; "
+            "border-radius: 6px; margin-top: 8px; padding-top: 14px; background-color: #21252b; } "
+            "QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 4px; }"
+        )
+        pending_layout = QVBoxLayout(pending_group)
+        pending_layout.setContentsMargins(8, 8, 8, 8)
+
+        self.table_pending = QTableWidget()
+        pending_headers = [
+            "Order ID",
+            "Placed Time",
+            "Ticker",
+            "Order Type",
+            "Buy Price",
+            "Current CMP (₹)",
+            "Stop Loss (₹)",
+            "Target (₹)",
+            "Est Qty",
+            "Est Capital (₹)",
+            "Status & Trigger Reason",
+            "Actions",
+        ]
+        self.table_pending.setColumnCount(len(pending_headers))
+        self.table_pending.setHorizontalHeaderLabels(pending_headers)
+        self.table_pending.setAlternatingRowColors(True)
+        self.table_pending.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table_pending.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._apply_table_style(self.table_pending)
+
+        pending_header = self.table_pending.horizontalHeader()
+        for idx in range(len(pending_headers)):
+            pending_header.setSectionResizeMode(idx, QHeaderView.ResizeMode.ResizeToContents)
+        pending_header.setSectionResizeMode(10, QHeaderView.ResizeMode.Stretch)
+
+        pending_layout.addWidget(self.table_pending)
+        layout.addWidget(pending_group, stretch=1)
+
+        # Section C: Trade History Journal Table
         history_group = QGroupBox("Trade History Journal (Closed Positions)")
         history_group.setStyleSheet(
             "QGroupBox { color: #abb2bf; font-weight: bold; border: 1px solid #3b4048; "
@@ -543,7 +661,7 @@ class PaperTradingTab(QWidget):
         idx = self.ticker_combo.findText(text)
         if idx >= 0:
             self.ticker_combo.setCurrentIndex(idx)
-        self.recalculate_position_size()
+        self.fetch_cmp_for_selected()
 
     def _on_ticker_editing_finished(self) -> None:
         """Resolve typed text when user presses Enter or leaves ticker field."""
@@ -562,7 +680,7 @@ class PaperTradingTab(QWidget):
             idx = self.ticker_combo.findData(resolved_ticker)
             if idx >= 0:
                 self.ticker_combo.setCurrentIndex(idx)
-        self.recalculate_position_size()
+        self.fetch_cmp_for_selected()
 
     def _resolve_ticker_from_text(self, text: str) -> str | None:
         """Find matching ticker from user-entered text (ticker symbol or company name).
@@ -610,16 +728,56 @@ class PaperTradingTab(QWidget):
         return curr_text.split(" ")[0].upper()
 
     def _on_ticker_changed(self) -> None:
-        """Handle stock selection change."""
-        self.recalculate_position_size()
+        """Handle stock selection change: auto-fetch CMP and populate default price."""
+        self.fetch_cmp_for_selected()
 
     def _on_target_toggled(self, checked: bool) -> None:
         """Enable or disable sell target input."""
         self.spin_target.setEnabled(checked)
         self.recalculate_position_size()
 
+    def _on_clear_buy_price_clicked(self) -> None:
+        """Clear buy price input to trigger execution at live CMP."""
+        self.input_buy_price.clear()
+        self.recalculate_position_size()
+
+    def get_target_buy_price(self) -> float | None:
+        """Retrieve user-entered buy limit price, or None if defaulted/empty.
+
+        Returns:
+            float | None: Explicit target buy price, or None to buy at CMP.
+        """
+        raw_text = self.input_buy_price.text().strip()
+        if not raw_text:
+            return None
+        try:
+            val = float(raw_text)
+            return val if val > 0 else None
+        except ValueError:
+            return None
+
+    def get_effective_entry_price(self) -> float:
+        """Return the effective entry price for calculations (buy price if set, else CMP).
+
+        Returns:
+            float: Effective entry price.
+        """
+        target_buy = self.get_target_buy_price()
+        if target_buy is not None:
+            return target_buy
+        if self._current_cmp > 0:
+            return self._current_cmp
+        ticker = self._get_selected_ticker()
+        if ticker:
+            p = self.engine.fetch_live_quote(ticker)
+            if p and p > 0:
+                self._current_cmp = round(p, 2)
+                self.lbl_cmp_badge.setText(f"CMP: ₹{self._current_cmp:,.2f}")
+                return self._current_cmp
+        return 0.0
+
     def fetch_cmp_for_selected(self) -> None:
-        """Fetch current market price for selected security and set as entry price."""
+        """Fetch current market price for selected security and set as default buy price."""
         ticker = self._get_selected_ticker()
         if not ticker:
             return
@@ -627,26 +785,53 @@ class PaperTradingTab(QWidget):
         self.lbl_status.setText(f"Fetching CMP for {ticker}...")
         price = self.engine.fetch_live_quote(ticker)
         if price and price > 0:
-            self.spin_entry.setValue(round(price, 2))
+            self._current_cmp = round(price, 2)
+            self._latest_prices[ticker] = self._current_cmp
+            self.lbl_cmp_badge.setText(f"CMP: ₹{self._current_cmp:,.2f}")
+            self.input_buy_price.setText(f"{self._current_cmp:.2f}")
             # Auto suggest sensible default SL (2% below) and Target (4% above)
-            sl_default = round(price * 0.98, 2)
-            target_default = round(price * 1.04, 2)
+            sl_default = round(self._current_cmp * 0.98, 2)
+            target_default = round(self._current_cmp * 1.04, 2)
             self.spin_sl.setValue(sl_default)
             self.spin_target.setValue(target_default)
             self.recalculate_position_size()
-            self.lbl_status.setText(f"Fetched {ticker} CMP: ₹{price:,.2f}")
+            self.lbl_status.setText(f"Fetched {ticker} CMP: ₹{self._current_cmp:,.2f}")
         else:
             self.lbl_status.setText(f"Could not fetch CMP for {ticker}. Check connection.")
 
     def recalculate_position_size(self) -> None:
         """Dynamically compute allowed quantity and metrics based on user inputs."""
-        entry = self.spin_entry.value()
+        entry = self.get_effective_entry_price()
         sl = self.spin_sl.value()
         has_target = self.chk_target.isChecked()
         target = self.spin_target.value() if has_target else None
 
+        target_buy = self.get_target_buy_price()
+        if target_buy is not None:
+            self.lbl_buy_mode_hint.setText(
+                f"• Mode: Limit Order (Buy on or below ₹{target_buy:,.2f})"
+            )
+            self.lbl_buy_mode_hint.setStyleSheet(
+                "color: #61afef; font-size: 11px; font-style: italic;"
+            )
+        else:
+            cmp_display = (
+                f"₹{self._current_cmp:,.2f}" if self._current_cmp > 0 else "Live CMP"
+            )
+            self.lbl_buy_mode_hint.setText(
+                f"• Mode: Market / At CMP (No limit: buys at {cmp_display})"
+            )
+            self.lbl_buy_mode_hint.setStyleSheet(
+                "color: #98c379; font-size: 11px; font-style: italic;"
+            )
+
         if entry <= 0 or sl <= 0 or sl >= entry:
-            self.lbl_calc_qty.setText("0 Shares (Invalid SL)")
+            msg = (
+                "0 Shares (Invalid SL)"
+                if sl >= entry and entry > 0
+                else "0 Shares (Fetch CMP)"
+            )
+            self.lbl_calc_qty.setText(msg)
             self.lbl_calc_qty.setStyleSheet("color: #e06c75; font-weight: bold;")
             self.lbl_calc_capital.setText("₹0.00")
             self.lbl_calc_loss.setText("N/A")
@@ -667,7 +852,9 @@ class PaperTradingTab(QWidget):
                 self.btn_place_order.setEnabled(False)
             else:
                 self.lbl_calc_qty.setText(f"{qty} Shares")
-                self.lbl_calc_qty.setStyleSheet("color: #98c379; font-size: 13px; font-weight: bold;")
+                self.lbl_calc_qty.setStyleSheet(
+                    "color: #98c379; font-size: 13px; font-weight: bold;"
+                )
                 self.btn_place_order.setEnabled(True)
 
             self.lbl_calc_capital.setText(f"₹{cap_req:,.2f}")
@@ -693,7 +880,7 @@ class PaperTradingTab(QWidget):
             self.btn_place_order.setEnabled(False)
 
     def place_paper_order(self) -> None:
-        """Validate inputs and place trade via engine."""
+        """Validate inputs and place trade or queue pending order via engine."""
         ticker = self._get_selected_ticker()
         if not ticker:
             QMessageBox.warning(
@@ -701,30 +888,54 @@ class PaperTradingTab(QWidget):
             )
             return
 
-        entry = self.spin_entry.value()
+        buy_price = self.get_target_buy_price()
         sl = self.spin_sl.value()
         has_target = self.chk_target.isChecked()
         target = self.spin_target.value() if has_target else None
 
         try:
-            order = self.engine.place_order(
+            outcome = self.engine.submit_order(
                 ticker=ticker,
-                entry_price=entry,
+                buy_price=buy_price,
                 stop_loss=sl,
                 sell_target=target,
                 side="BUY",
+                current_cmp=self._current_cmp,
             )
-            QMessageBox.information(
-                self,
-                "Paper Trade Placed",
-                f"Successfully opened trade #{order['trade_id']} for {order['quantity']} {order['ticker']} "
-                f"at ₹{order['entry_price']:,.2f}.\n\nTotal Capital: ₹{order['total_cost']:,.2f}",
-            )
+
+            status = outcome.get("status")
+            if status == "EXECUTED":
+                QMessageBox.information(
+                    self,
+                    "Paper Trade Placed",
+                    f"Successfully opened trade #{outcome['trade_id']} for "
+                    f"{outcome['quantity']} shares of {outcome['ticker']} "
+                    f"at ₹{outcome['entry_price']:,.2f}.\n\n"
+                    f"Total Capital Deployed: ₹{outcome['total_cost']:,.2f}",
+                )
+            elif status == "PENDING":
+                buy_desc = (
+                    f"₹{buy_price:,.2f} or below"
+                    if buy_price is not None
+                    else f"CMP (Market Order - ~₹{self._current_cmp:,.2f})"
+                )
+                QMessageBox.information(
+                    self,
+                    "Order Queued (Pending)",
+                    f"Order #{outcome['order_id']} for {outcome['ticker']} has been queued in "
+                    f"Pending Orders.\n\n"
+                    f"• Limit Condition: {buy_desc}\n"
+                    f"• Stop Loss: ₹{sl:,.2f}\n"
+                    f"• Target: {f'₹{target:,.2f}' if target else 'Open Exit'}\n"
+                    f"• Estimated Shares: {outcome['quantity']}\n\n"
+                    f"Status: {outcome.get('status_reason', 'Waiting for execution')}",
+                )
+
             self.refresh_all_views()
             if self.worker:
                 self.worker.trigger_now()
 
-        except PositionSizingError as err:
+        except (PositionSizingError, ValueError) as err:
             QMessageBox.critical(self, "Order Placement Failed", str(err))
 
     def manual_square_off(self, trade_id: int) -> None:
@@ -753,7 +964,8 @@ class PaperTradingTab(QWidget):
             QMessageBox.information(
                 self,
                 "Position Closed",
-                f"Trade #{trade_id} ({report['ticker']}) closed at ₹{exit_price:,.2f}.\nRealized PnL: {pnl_str}",
+                f"Trade #{trade_id} ({report['ticker']}) closed at ₹{exit_price:,.2f}.\n"
+                f"Realized PnL: {pnl_str}",
             )
             self.refresh_all_views()
 
@@ -830,7 +1042,7 @@ class PaperTradingTab(QWidget):
         reply = QMessageBox.warning(
             self,
             "Reset Virtual Capital",
-            "This will reset your cash balance to ₹5,00,000 and clear all active/historical paper trades.\n\n"
+            "This will reset your cash balance to ₹5,00,000 and clear all paper trades.\n\n"
             "Do you wish to proceed?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -1010,7 +1222,6 @@ class PaperTradingTab(QWidget):
                 if col_idx in [8, 9]:
                     item.setForeground(pnl_color)
                 if col_idx == 3:
-                    # Highlight ticker with interactive accent styling
                     item.setForeground(QColor("#61afef"))
                     f = item.font()
                     f.setBold(True)
@@ -1018,12 +1229,129 @@ class PaperTradingTab(QWidget):
                     item.setToolTip(f"Click to open 3-month chart for {trade['ticker']}")
                 self.table_history.setItem(row_idx, col_idx, item)
 
+        # 4. Populate Pending Orders Table
+        self.populate_pending_orders_table()
+
+    def populate_pending_orders_table(self) -> None:
+        """Populate the pending/waiting orders table."""
+        pending_orders = self.engine.get_pending_orders()
+        self.table_pending.setRowCount(len(pending_orders))
+
+        for row_idx, order in enumerate(pending_orders):
+            order_id = int(order["order_id"])
+            ticker = str(order["ticker"])
+            created_at = str(order["created_at"])
+            buy_price = (
+                float(order["buy_price"]) if order["buy_price"] is not None else None
+            )
+            sl = float(order["stop_loss"])
+            target = (
+                float(order["sell_target"]) if order["sell_target"] is not None else None
+            )
+            qty = int(order["requested_quantity"])
+            reason = order.get("status_reason") or "Waiting"
+
+            curr_cmp = self._latest_prices.get(ticker) or self.engine.fetch_live_quote(ticker)
+            cmp_str = f"₹{curr_cmp:,.2f}" if curr_cmp and curr_cmp > 0 else "—"
+
+            order_type = (
+                f"Limit (≤ ₹{buy_price:,.2f})" if buy_price is not None else "Market (CMP)"
+            )
+            buy_price_str = f"₹{buy_price:,.2f}" if buy_price is not None else "CMP (Market)"
+            est_entry = buy_price if buy_price is not None else (curr_cmp or 0.0)
+            est_cap = qty * est_entry
+
+            items = [
+                QTableWidgetItem(f"#{order_id}"),
+                QTableWidgetItem(created_at),
+                QTableWidgetItem(ticker),
+                QTableWidgetItem(order_type),
+                QTableWidgetItem(buy_price_str),
+                QTableWidgetItem(cmp_str),
+                QTableWidgetItem(f"₹{sl:,.2f}"),
+                QTableWidgetItem(f"₹{target:,.2f}" if target else "—"),
+                QTableWidgetItem(str(qty)),
+                QTableWidgetItem(f"₹{est_cap:,.2f}"),
+                QTableWidgetItem(reason),
+            ]
+
+            for col_idx, item in enumerate(items):
+                item.setTextAlignment(
+                    Qt.AlignmentFlag.AlignRight
+                    if col_idx in [4, 5, 6, 7, 8, 9]
+                    else Qt.AlignmentFlag.AlignCenter
+                )
+                if col_idx == 2:
+                    item.setForeground(QColor("#61afef"))
+                    f = item.font()
+                    f.setBold(True)
+                    item.setFont(f)
+                if col_idx == 10:
+                    item.setForeground(QColor("#e5c07b"))
+                self.table_pending.setItem(row_idx, col_idx, item)
+
+            btn_cancel = QPushButton("✕ Cancel")
+            btn_cancel.setStyleSheet(
+                "QPushButton { background-color: #3b2020; color: #e06c75; "
+                "font-size: 11px; padding: 3px 6px; border: 1px solid #5c2828; "
+                "border-radius: 3px; font-weight: bold; } "
+                "QPushButton:hover { background-color: #e06c75; color: #ffffff; }"
+            )
+            btn_cancel.setToolTip("Cancel this pending order")
+            btn_cancel.clicked.connect(
+                lambda _checked=False, oid=order_id: self.cancel_pending_order(oid)
+            )
+            self.table_pending.setCellWidget(row_idx, 11, btn_cancel)
+
+    def cancel_pending_order(self, order_id: int) -> None:
+        """Cancel a pending order upon trader confirmation.
+
+        Args:
+            order_id (int): Order identifier to cancel.
+        """
+        reply = QMessageBox.question(
+            self,
+            "Confirm Cancel Order",
+            f"Are you sure you want to cancel pending Order #{order_id}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            success = self.engine.cancel_order(order_id)
+            if success:
+                self.lbl_status.setText(f"Order #{order_id} cancelled.")
+                self.refresh_all_views()
+            else:
+                QMessageBox.warning(
+                    self, "Cancel Failed", f"Order #{order_id} is no longer pending."
+                )
+
+    def _on_orders_executed(self, executed_list: list[dict[str, Any]]) -> None:
+        """Handle signal when pending orders are executed automatically."""
+        self.refresh_all_views()
+        names = ", ".join([f"#{o['order_id']} ({o['ticker']})" for o in executed_list])
+        self.lbl_status.setText(f"Executed {len(executed_list)} order(s): {names}")
+        QMessageBox.information(
+            self,
+            "Pending Orders Executed",
+            f"NSE Market Open: The following {len(executed_list)} pending order(s) "
+            f"were successfully executed at CMP:\n\n"
+            + "\n".join(
+                [
+                    f"• Order #{o['order_id']} ({o['ticker']}): {o['quantity']} shares "
+                    f"@ ₹{o['entry_price']:,.2f} (Trade #{o['trade_id']})"
+                    for o in executed_list
+                ]
+            ),
+        )
+
     def start_background_worker(self) -> None:
         """Instantiate and start the background price monitor thread."""
         if self.worker is None:
             self.worker = PaperTradingWorker(self.engine, interval_seconds=10)
             self.worker.prices_updated.connect(self._on_prices_updated)
             self.worker.trades_exited.connect(self._on_trades_exited)
+            self.worker.orders_executed.connect(self._on_orders_executed)
             self.worker.status_updated.connect(self._on_worker_status)
             self.worker.error_occurred.connect(self._on_worker_error)
             self.worker.start()
@@ -1050,6 +1378,7 @@ class PaperTradingTab(QWidget):
 
     def _on_prices_updated(self, price_map: dict[str, float]) -> None:
         """Handle signal from background thread when quotes are updated."""
+        self._latest_prices.update(price_map)
         self.refresh_all_views()
 
     def _on_trades_exited(self, exited_trades: list[dict[str, Any]]) -> None:

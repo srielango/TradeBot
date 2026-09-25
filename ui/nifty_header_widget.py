@@ -1,6 +1,6 @@
 """Nifty benchmark live data header widget and background polling worker."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 import math
 from typing import Any
 
@@ -21,31 +21,7 @@ from PyQt6.QtWidgets import (
 )
 import yfinance as yf
 
-# Indian Standard Time (IST) offset: UTC + 5:30
-IST_TIMEZONE = timezone(timedelta(hours=5, minutes=30))
-
-
-def is_market_open_ist() -> tuple[bool, str]:
-    """Determine whether the Indian equity market (NSE) is currently open.
-
-    Regular trading hours on NSE are Monday to Friday from 9:15 AM to 3:30 PM IST.
-
-    Returns:
-        tuple[bool, str]: (is_open, status_description).
-    """
-    now_ist = datetime.now(IST_TIMEZONE)
-    # Weekday check (0 = Monday, ..., 4 = Friday, 5 = Saturday, 6 = Sunday)
-    if now_ist.weekday() >= 5:
-        return False, "Market Closed (Weekend)"
-
-    market_open = now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
-    market_close = now_ist.replace(hour=15, minute=30, second=0, microsecond=0)
-
-    if market_open <= now_ist <= market_close:
-        return True, "Market Open"
-    if now_ist < market_open:
-        return False, "Pre-Market"
-    return False, "Market Closed"
+from config import IST_TIMEZONE, is_market_open_ist
 
 
 class NiftyLiveWorker(QThread):

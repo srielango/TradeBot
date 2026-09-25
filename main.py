@@ -1400,6 +1400,148 @@ def example_paper_trading_cagr() -> None:
     print("=" * 90)
 
 
+def example_paper_trading_limit_orders() -> None:
+    """Showcase Paper Trading Limit Buy orders, pending queues, and NSE market open triggers.
+
+    Demonstrates:
+    1. Placing an order outside trading window (waits for NSE open).
+    2. Placing an order with no buy price (defaults to CMP; executes at opening CMP).
+    3. Placing an order with a buy price (limit: executes only if opening CMP <= buy price).
+    4. Simulating NSE open with price updates and evaluating limit executions.
+    5. Order cancellation of remaining pending orders.
+    """
+    print("=" * 88)
+    print("PAPER TRADING LIMIT ORDERS & NSE TRADING WINDOW EXECUTION SHOWCASE")
+    print("=" * 88)
+    print("Rules Evaluated:")
+    print("  1. Buy on or below a specific price (Limit Order): Default to CMP if empty.")
+    print("  2. Outside trading window: Queue as PENDING, wait until NSE opens.")
+    print("  3. When NSE opens:")
+    print("     - If no buy price: executes at CMP.")
+    print("     - If buy price entered: executes only if CMP <= buy price.")
+    print("-" * 88)
+
+    engine = PaperTradingEngine()
+    initial_cash = engine.get_cash_balance()
+
+    # Step 1: Place an order outside trading window WITHOUT buy price (Market Order -> use CMP)
+    print("\n[1] Submitting Order 1 (Market Order: No buy price entered outside trading window):")
+    order1 = engine.submit_order(
+        ticker="INFY.NS",
+        buy_price=None,
+        stop_loss=1750.00,
+        sell_target=1950.00,
+        current_cmp=1800.00,
+        market_open_override=False,
+    )
+    print(f"  Order ID     : #{order1['order_id']}")
+    print(f"  Ticker       : {order1['ticker']}")
+    print(f"  Buy Price    : {order1['buy_price']} (None -> defaulted to CMP)")
+    print(f"  Status       : {order1['status']}")
+    print(f"  Reason       : {order1['status_reason']}")
+    print(f"  Est. Shares  : {order1['quantity']}")
+
+    # Step 2: Place an order outside trading window WITH buy price (Limit Order: <= 2450.00)
+    print("\n[2] Submitting Order 2 (Limit Order: Buy on or below INR 2,450.00):")
+    order2 = engine.submit_order(
+        ticker="RELIANCE.NS",
+        buy_price=2450.00,
+        stop_loss=2400.00,
+        sell_target=2600.00,
+        current_cmp=2480.00,
+        market_open_override=False,
+    )
+    print(f"  Order ID     : #{order2['order_id']}")
+    print(f"  Ticker       : {order2['ticker']}")
+    print(f"  Buy Price    : INR {order2['buy_price']:,.2f} (Buy on or below)")
+    print(f"  Status       : {order2['status']}")
+    print(f"  Reason       : {order2['status_reason']}")
+    print(f"  Est. Shares  : {order2['quantity']}")
+
+    # Step 3: Inspect Pending Orders Queue in SQLite
+    print("\n[3] Current Pending Orders Queue in 'paper_orders':")
+    pending = engine.get_pending_orders()
+    for p in pending:
+        b_str = (
+            f"INR {p['buy_price']:,.2f}"
+            if p["buy_price"] is not None
+            else "CMP (Market)"
+        )
+        print(
+            f"  Order #{p['order_id']}: {p['ticker']} | Type: {b_str} | "
+            f"SL: INR {p['stop_loss']:,.2f} | Status: {p['status']} ({p['status_reason']})"
+        )
+
+    # Step 4: Simulate NSE Market Open
+    print("\n[4] Simulating NSE Market Open (9:15 AM IST):")
+    simulated_open_prices = {
+        "INFY.NS": 1810.00,
+        "RELIANCE.NS": 2440.00,
+    }
+    executed = engine.process_pending_orders(
+        price_map=simulated_open_prices,
+        market_open_override=True,
+    )
+    print(f"  Executed {len(executed)} pending order(s) on market open:")
+    for ex in executed:
+        print(
+            f"  -> Order #{ex['order_id']} ({ex['ticker']}) EXECUTED at CMP "
+            f"INR {ex['entry_price']:,.2f}! Qty: {ex['quantity']} shares | "
+            f"Trade ID: #{ex['trade_id']} | Total Cost: INR {ex['total_cost']:,.2f}"
+        )
+
+    # Step 5: Test Limit Price Above Market CMP Condition
+    print(
+        "\n[5] Submitting Order 3 with Limit Price Below Open "
+        "(TCS.NS limit 3100.0 vs CMP 3200.0):"
+    )
+    order3 = engine.submit_order(
+        ticker="TCS.NS",
+        buy_price=3100.00,
+        stop_loss=3000.00,
+        sell_target=3300.00,
+        current_cmp=3200.00,
+        market_open_override=True,
+    )
+    print(f"  Order ID     : #{order3['order_id']}")
+    print(f"  Ticker       : {order3['ticker']}")
+    print(f"  Status       : {order3['status']} ({order3['status_reason']})")
+
+    # Step 6: Cancel Remaining Pending Order
+    print(f"\n[6] Cancelling Pending Order #{order3['order_id']} (TCS.NS):")
+    cancel_success = engine.cancel_order(order3["order_id"])
+    print(
+        f"  Cancellation Result: "
+        f"{'SUCCESS (Order Cancelled)' if cancel_success else 'FAILED'}"
+    )
+
+    # Step 7: Final Portfolio Summary and Cleanup
+    print("\n[7] Final Order Book Status Summary:")
+    all_orders = engine.order_manager.get_all_orders()
+    for o in all_orders[:5]:
+        print(
+            f"  Order #{o['order_id']}: {o['ticker']} | Status: {o['status']} | "
+            f"Reason: {o['status_reason']}"
+        )
+
+    # Cleanup demonstration records
+    trade_ids = [ex["trade_id"] for ex in executed]
+    order_ids = [order1["order_id"], order2["order_id"], order3["order_id"]]
+    with engine._get_connection() as conn:
+        cursor = conn.cursor()
+        for tid in trade_ids:
+            cursor.execute("DELETE FROM paper_trades WHERE trade_id = ?", (tid,))
+        for oid in order_ids:
+            cursor.execute("DELETE FROM paper_orders WHERE order_id = ?", (oid,))
+        cursor.execute(
+            "UPDATE paper_portfolio SET cash_balance = ? WHERE id = 1",
+            (initial_cash,),
+        )
+        conn.commit()
+    print("\n[8] Demonstration Orders and Trades Cleaned Up; Database Preserved.")
+    print("=" * 88)
+
+
 def example_nifty_dual_momentum_breakout() -> None:
     """Showcase Nifty Dual Momentum Breakout strategy for hourly Nifty 50 cash stocks.
 
@@ -1708,6 +1850,12 @@ def main() -> None:
             if arg.startswith("--ticker="):
                 target_ticker = arg.split("=")[1]
         example_screener_fetcher(ticker=target_ticker)
+    elif (
+        "--paper-orders" in sys.argv
+        or "--pending-orders" in sys.argv
+        or "--limit-orders" in sys.argv
+    ):
+        example_paper_trading_limit_orders()
     else:
         example_trading_dashboard()
 
