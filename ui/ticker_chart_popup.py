@@ -55,6 +55,7 @@ class TickerChartPopupDialog(QDialog):
         self.ticker_symbol = self.ticker_raw.split(" ")[0]
         self.repo = repo or MarketRepository()
         self.selected_months: int | None = default_period_months
+        self.selected_interval: str = "daily"
         self.df_history: pd.DataFrame = pd.DataFrame()
         self.company_name: str = self.ticker_symbol
 
@@ -141,6 +142,30 @@ class TickerChartPopupDialog(QDialog):
         # =====================================================================
         toolbar_layout = QHBoxLayout()
         toolbar_layout.setSpacing(8)
+
+        # Interval pill buttons (Daily vs Hourly)
+        lbl_int = QLabel("<b>Interval:</b>")
+        lbl_int.setStyleSheet("color: #d7dae0; font-size: 12px;")
+        toolbar_layout.addWidget(lbl_int)
+
+        self.btn_group_int = QButtonGroup(self)
+        self.btn_group_int.setExclusive(True)
+
+        self.int_buttons: dict[str, QPushButton] = {}
+        for label, interval_val in [("1D", "daily"), ("1H", "hourly")]:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            is_active = (interval_val == self.selected_interval)
+            btn.setChecked(is_active)
+            self._style_timeframe_button(btn, is_active)
+            btn.setProperty("interval", interval_val)
+            btn.clicked.connect(self._on_interval_clicked)
+            self.btn_group_int.addButton(btn)
+            self.int_buttons[label] = btn
+            toolbar_layout.addWidget(btn)
+
+        toolbar_layout.addSpacing(10)
 
         # Timeframe pill buttons
         lbl_tf = QLabel("<b>Period:</b>")
@@ -253,6 +278,19 @@ class TickerChartPopupDialog(QDialog):
         self.selected_months = sender.property("months")
         self.render_chart()
 
+    def _on_interval_clicked(self) -> None:
+        """Handle interval button click (1D vs 1H)."""
+        sender = self.sender()
+        if not isinstance(sender, QPushButton):
+            return
+
+        for btn in self.int_buttons.values():
+            self._style_timeframe_button(btn, btn == sender)
+
+        self.selected_interval = sender.property("interval")
+        self.load_data()
+        self.render_chart()
+
     def load_data(self) -> None:
         """Fetch historical records from database repository or fallback to yfinance."""
         # 1. Look up company metadata
@@ -265,15 +303,19 @@ class TickerChartPopupDialog(QDialog):
         self.lbl_company.setText(f"{self.company_name} • NSE Equity")
 
         # 2. Query historical data from SQLite database
-        df = self.repo.get_data(self.ticker_symbol)
+        if self.selected_interval == "hourly":
+            df = self.repo.get_data(self.ticker_symbol)
+        else:
+            df = self.repo.get_daily_data(self.ticker_symbol)
 
         # 3. Fallback to online yfinance fetch if local records are absent
         if df.empty:
             try:
+                yf_interval = "1h" if self.selected_interval == "hourly" else "1d"
                 yf_df = yf.download(
                     self.ticker_symbol,
                     period="1y",
-                    interval="1d",
+                    interval=yf_interval,
                     progress=False,
                 )
                 if not yf_df.empty:
@@ -338,8 +380,10 @@ class TickerChartPopupDialog(QDialog):
         self.lbl_price.setStyleSheet(f"color: {color_hex}; font-weight: bold;")
         self.lbl_change.setText(f"{sign_str}₹{net_change:,.2f} ({sign_str}{pct_change:.2f}%)")
         self.lbl_change.setStyleSheet(f"color: {color_hex}; font-weight: bold;")
+        interval_tag = "Daily" if self.selected_interval == "daily" else "Hourly"
         self.lbl_range_stats.setText(
-            f"Period High: ₹{period_high:,.2f} | Low: ₹{period_low:,.2f} | Bars: {len(df_slice)}"
+            f"Period High: ₹{period_high:,.2f} | Low: ₹{period_low:,.2f} | "
+            f"Bars: {len(df_slice)} ({interval_tag})"
         )
 
         # Check toggle states
@@ -451,13 +495,13 @@ class TickerChartPopupDialog(QDialog):
         )
         fig.update_yaxes(title_text="Price (₹)", row=1, col=1)
 
-        # Hide weekend gaps to avoid blank spaces on timeline
-        fig.update_xaxes(
-            rangebreaks=[
-                dict(bounds=["sat", "mon"]),
-                dict(bounds=[15.5, 9.25], pattern="hour"),
-            ]
-        )
+        # Configure x-axis rangebreaks: hide weekends on all charts,
+        # and hide overnight non-trading hours only on intraday hourly charts
+        rangebreaks = [dict(bounds=["sat", "mon"])]
+        if self.selected_interval == "hourly":
+            rangebreaks.append(dict(bounds=[15.5, 9.25], pattern="hour"))
+
+        fig.update_xaxes(rangebreaks=rangebreaks)
 
         html_content = fig.to_html(include_plotlyjs="cdn")
         self.chart_view.setHtml(html_content)

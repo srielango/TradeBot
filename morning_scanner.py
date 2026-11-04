@@ -28,7 +28,8 @@ class MorningScanner:
 
         Args:
             repo (MarketRepository | None): Market data repository. Defaults to new instance.
-            paper_engine (PaperTradingEngine | None): Paper trading engine. Defaults to new instance.
+            paper_engine (PaperTradingEngine | None): Paper trading engine.
+                Defaults to new instance.
         """
         self.repo = repo if repo is not None else MarketRepository()
         self.paper_engine = (
@@ -68,11 +69,15 @@ class MorningScanner:
             list[dict]: List of scan result dictionaries for all evaluated stocks,
                 sorted with SELL signals first, then highest buy confluence.
         """
-        # Fetch stock metadata (ticker -> company name) and all price series
+        # Fetch stock metadata (ticker -> company name) and price series
         metadata = self.repo.get_stock_metadata()
-        stocks_data = self.repo.get_all_stocks_data()
+        stocks_daily_data = self.repo.get_all_stocks_daily_data()
+        stocks_hourly_data = self.repo.get_all_stocks_data()
 
-        if not stocks_data:
+        primary_stocks_data = (
+            stocks_daily_data if stocks_daily_data else stocks_hourly_data
+        )
+        if not primary_stocks_data:
             return []
 
         # Retrieve active open positions if not explicitly passed
@@ -93,30 +98,48 @@ class MorningScanner:
                 open_positions_by_ticker.setdefault(base_t, []).append(pos)
 
         results = []
+        lookback_days = max(30, int(lookback_months * 30.5))
 
-        for ticker, df in stocks_data.items():
-            if df.empty or len(df) < 20:
+        for ticker, df_daily in primary_stocks_data.items():
+            df_hourly = stocks_hourly_data.get(ticker, pd.DataFrame())
+            if df_daily.empty or len(df_daily) < 10:
                 continue
 
-            # Ensure date column is parseable and compute cutoff date
-            df_work = df.copy()
-            df_work["dt"] = pd.to_datetime(df_work["date"])
-            max_date = df_work["dt"].max()
-
-            # Slice the past 3 to 6 months for indicator warm-up
-            lookback_days = max(30, int(lookback_months * 30.5))
-            cutoff_date = max_date - pd.Timedelta(days=lookback_days)
-            df_slice = (
-                df_work[df_work["dt"] >= cutoff_date]
+            # Slice daily bars for indicator warm-up
+            df_daily_work = df_daily.copy()
+            df_daily_work["dt"] = pd.to_datetime(df_daily_work["date"])
+            max_daily_date = df_daily_work["dt"].max()
+            cutoff_daily = max_daily_date - pd.Timedelta(days=lookback_days)
+            df_slice_daily = (
+                df_daily_work[df_daily_work["dt"] >= cutoff_daily]
                 .drop(columns=["dt"])
                 .reset_index(drop=True)
             )
+            if len(df_slice_daily) < 10:
+                df_slice_daily = df_daily.copy().reset_index(drop=True)
 
-            # Ensure sufficient records exist for indicator rolling windows
-            if len(df_slice) < 20:
-                df_slice = df.copy().reset_index(drop=True)
+            # Slice hourly bars for hourly strategies
+            if not df_hourly.empty and len(df_hourly) >= 20:
+                df_hourly_work = df_hourly.copy()
+                df_hourly_work["dt"] = pd.to_datetime(df_hourly_work["date"])
+                max_hourly_date = df_hourly_work["dt"].max()
+                cutoff_hourly = max_hourly_date - pd.Timedelta(days=lookback_days)
+                df_slice_hourly = (
+                    df_hourly_work[df_hourly_work["dt"] >= cutoff_hourly]
+                    .drop(columns=["dt"])
+                    .reset_index(drop=True)
+                )
+                if len(df_slice_hourly) < 20:
+                    df_slice_hourly = df_hourly.copy().reset_index(drop=True)
+            else:
+                df_slice_hourly = df_slice_daily.copy()
 
-            prev_close_bar = df_slice.iloc[-1]
+            # Determine latest reference price bar
+            if not df_hourly.empty:
+                prev_close_bar = df_slice_hourly.iloc[-1]
+            else:
+                prev_close_bar = df_slice_daily.iloc[-1]
+
             prev_close_date = str(prev_close_bar["date"])
             prev_close_price = float(prev_close_bar["close"])
 
@@ -223,7 +246,13 @@ class MorningScanner:
             for strat_name, strat_cls in STRATEGY_REGISTRY.items():
                 try:
                     strategy_instance = strat_cls()
-                    signals_df = strategy_instance.generate_signals(df_slice)
+                    is_hourly = "hourly" in strat_name.lower()
+                    strat_df = (
+                        df_slice_hourly
+                        if (is_hourly and len(df_slice_hourly) >= 20)
+                        else df_slice_daily
+                    )
+                    signals_df = strategy_instance.generate_signals(strat_df)
 
                     if signals_df.empty or "Signal" not in signals_df.columns:
                         continue

@@ -127,6 +127,15 @@ class TradingApp(QMainWindow):
         self.ticker_list.currentTextChanged.connect(self.refresh_chart)
         sidebar.addWidget(self.ticker_list)
 
+        # ── Timeframe / Candle Interval Selector ─────────────────────────────
+        sidebar.addWidget(QLabel('<b>Timeframe / Interval</b>'))
+        self.interval_selector = QComboBox()
+        self.interval_selector.addItem('Daily (1D)', 'daily')
+        self.interval_selector.addItem('Hourly (1H)', 'hourly')
+        self.interval_selector.setCurrentIndex(0)
+        self.interval_selector.currentIndexChanged.connect(self.refresh_chart)
+        sidebar.addWidget(self.interval_selector)
+
         # ── Chart Period Selector ────────────────────────────────────────────
 
         sidebar.addWidget(QLabel('<b>Chart Period</b>'))
@@ -650,8 +659,19 @@ class TradingApp(QMainWindow):
         if not display_string:
             return
 
+        # Determine timeframe interval (Daily or Hourly)
+        is_daily = (
+            self.interval_selector.currentData() == 'daily'
+            if hasattr(self, 'interval_selector')
+            else True
+        )
+
         # Always pull full history from repository for accurate indicator calculation
-        df_full = self.repo.get_data(display_string)
+        if is_daily:
+            df_full = self.repo.get_daily_data(display_string)
+        else:
+            df_full = self.repo.get_data(display_string)
+
         if df_full.empty:
             print(f"Warning: No database records discovered for {display_string}")
             return
@@ -1148,7 +1168,10 @@ class TradingApp(QMainWindow):
             benchmark_ticker = self.beta_benchmark.currentData()
             benchmark_display = f"{benchmark_ticker} (INDEX)"
 
-            df_bench = self.repo.get_data(benchmark_display)
+            if is_daily:
+                df_bench = self.repo.get_daily_data(benchmark_display)
+            else:
+                df_bench = self.repo.get_data(benchmark_display)
 
             if not df_bench.empty:
                 df_bench = df_bench.copy()
@@ -1271,13 +1294,13 @@ class TradingApp(QMainWindow):
         # Always show x-axis label on the bottom-most subplot row
         fig.update_xaxes(title_text="Date", row=num_rows, col=1)
 
-        # Hide weekends and overnight non-trading hours to avoid gaps on intraday hourly charts
-        fig.update_xaxes(
-            rangebreaks=[
-                {'bounds': ['sat', 'mon']},  # Hide weekends
-                {'bounds': [15.5, 9.25], 'pattern': 'hour'},  # Hide overnight hours (3:30PM-9:15AM)
-            ]
-        )
+        # Configure x-axis rangebreaks: hide weekends on all charts,
+        # and hide overnight non-trading hours only on intraday hourly charts
+        rangebreaks = [{'bounds': ['sat', 'mon']}]
+        if not is_daily:
+            rangebreaks.append({'bounds': [15.5, 9.25], 'pattern': 'hour'})
+
+        fig.update_xaxes(rangebreaks=rangebreaks)
 
         # Render HTML string into WebEngine view
         html = fig.to_html(include_plotlyjs='cdn')
@@ -1309,8 +1332,10 @@ class TradingApp(QMainWindow):
             f"{sign_str}₹{net_change:,.2f} ({sign_str}{pct_change:.2f}%)"
         )
         self.lbl_chart_change.setStyleSheet(f"color: {color_hex}; font-weight: bold;")
+        interval_tag = "Daily" if is_daily else "Hourly"
         self.lbl_chart_range.setText(
-            f"Period High: ₹{period_high:,.2f} | Low: ₹{period_low:,.2f} | Bars: {len(df_display)}"
+            f"Period High: ₹{period_high:,.2f} | Low: ₹{period_low:,.2f} | "
+            f"Bars: {len(df_display)} ({interval_tag})"
         )
 
     def check_database_health(self):
